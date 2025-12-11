@@ -1,8 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-debug=True
-data_path='data/data.txt'
+import src.__config as GLOBALS
 
 
 # Load data function
@@ -35,5 +34,7 @@ def convert_data_to_points(distance, debug:bool=False):
 
     return x, y
 
-travelled_distance, measured_variation, lidar_measurements=load_data(data_path=data_path)
-x, y=convert_data_to_points(lidar_measurements, debug=debug)
+# Main
+if __name__ == "__main__":
+    travelled_distance, measured_variation, lidar_measurements=load_data(data_path=GLOBALS.PATH_DATASET, debug=GLOBALS.DEBUG)
+    x, y=convert_data_to_points(lidar_measurements, debug=GLOBALS.DEBUG)

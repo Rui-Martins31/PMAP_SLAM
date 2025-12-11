@@ -1,2 +1,5 @@
 # Virtual Environment
 .venv
+
+# Folders
+__pycache__
