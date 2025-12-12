@@ -78,7 +78,7 @@ def calc_corner(x, y):
         angle=np.rad2deg(np.arccos(cos_ang))
         angles.append(angle)
         
-        if (angle>30):
+        if (angle>20):
             idx_corners.append(i)
 
 
@@ -117,9 +117,10 @@ if __name__ == "__main__":
         lidar_filtered=smoth_filter_data(lidar_measurements[20])
         x, y=convert_data_to_points(lidar_filtered, debug=GLOBALS.DEBUG)
         angles, idx_corners=calc_corner(x,y)
-        if False:
-            for j in range(len(x)): 
-                print( "x " + str(x[j]) + " y " + str(y[j]) + ":" + str(angles[j]))
+
+        for j in range(len(idx_corners)): 
+          print( "x " + str(x[j]) + " y " + str(y[j]) + ":" + str(idx_corners[j]))
+        
         print(idx_corners)
         plot_points(x, y, idx_corners)
         break
