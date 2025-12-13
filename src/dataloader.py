@@ -29,7 +29,7 @@ def verify_corner_known(new_corner, corner_map, threshold: float=0.1):
             print("Corner Removed")
             is_known = True
             break
-            corner_map.append([corner[0], corner[1]])
+            
     
     if not is_known:
         corner_map.append(new_corner)
