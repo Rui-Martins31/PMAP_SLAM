@@ -48,6 +48,23 @@ def smoth_filter_data(lidar_data, window_size: int=7):
     
     return np.convolve(data_padded, np.ones(window_size)/window_size, mode='valid')
 
+def remove_outliers(lidar_data, threshold=0.2):
+    
+    data_copy=lidar_data.copy()
+
+    for i in range(1, len(lidar_data)-1):
+
+        prev_dist=abs(lidar_data[i]-lidar_data[i-1])
+        next_dist=abs(lidar_data[i+1]-lidar_data[i])
+
+        if (prev_dist>threshold and next_dist>threshold):
+            data_copy[i]=(lidar_data[i-1]+lidar_data[i+1])/2
+            #print("REMOVED")
+        
+    
+    return data_copy
+
+
 def calc_corner(x, y):
 
     angles=[]
@@ -112,15 +129,27 @@ def plot_points(x: np.ndarray, y: np.ndarray, idx_corners, save_plot: bool = Fal
 # Main
 if __name__ == "__main__":
     travelled_distance, measured_variation, lidar_measurements=load_data(data_path=GLOBALS.PATH_DATASET, debug=GLOBALS.DEBUG)
-    print(lidar_measurements.shape)
-    for i in range(len(lidar_measurements)):
-        lidar_filtered=smoth_filter_data(lidar_measurements[20])
-        x, y=convert_data_to_points(lidar_filtered, debug=GLOBALS.DEBUG)
-        angles, idx_corners=calc_corner(x,y)
+    
+    #print(lidar_measurements.shape)
 
-        for j in range(len(idx_corners)): 
-          print( "x " + str(x[j]) + " y " + str(y[j]) + ":" + str(idx_corners[j]))
+    x_vetor=[]
+    y_vetor=[]
+    idx_corners_vetor=[]
+
+    for i in range(len(lidar_measurements)):
+
+        data_no_outliers=remove_outliers(lidar_measurements[i], threshold=0.07)
+        lidar_filtered=smoth_filter_data(data_no_outliers)
+
+        x, y=convert_data_to_points(lidar_filtered, debug=GLOBALS.DEBUG)
+        x_vetor.append(x)
+        y_vetor.append(y)
+
+        angles, idx_corners=calc_corner(x,y)
+        idx_corners_vetor.append(idx_corners)
+
+        #for j in range(len(idx_corners)): 
+          #print( "x " + str(x[j]) + " y " + str(y[j]) + ":" + str(idx_corners[j]))
         
-        print(idx_corners)
-        plot_points(x, y, idx_corners)
-        break
+        #print(idx_corners)
+        #plot_points(x, y, idx_corners)
