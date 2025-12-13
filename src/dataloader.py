@@ -12,6 +12,30 @@ def load_data_using_pd(data_path, debug: bool = False):
     pass
 
 # Load data function
+
+def verify_corner_known(new_corner, corner_map, threshold: float=0.1):
+
+    
+
+    if(len(corner_map)==0):
+        corner_map.append(new_corner)
+        return corner_map
+
+    is_known = False
+
+    for known_corner in corner_map:
+        dist=np.sqrt((new_corner[0] - known_corner[0])**2 + (new_corner[1]-corner_map[i][1])**2)
+        if (dist < threshold):
+            print("Corner Removed")
+            is_known = True
+            break
+            corner_map.append([corner[0], corner[1]])
+    
+    if not is_known:
+        corner_map.append(new_corner)
+            
+    return corner_map
+
 def load_data(data_path, debug:bool=False):
     data = np.loadtxt(data_path)
 
@@ -128,15 +152,18 @@ def plot_points(x: np.ndarray, y: np.ndarray, idx_corners, save_plot: bool = Fal
 
 # Main
 if __name__ == "__main__":
+
+
     travelled_distance, measured_variation, lidar_measurements=load_data(data_path=GLOBALS.PATH_DATASET, debug=GLOBALS.DEBUG)
     
     #print(lidar_measurements.shape)
 
+    #TASK 1-----------------------------------------
     x_vetor=[]
     y_vetor=[]
     idx_corners_vetor=[]
 
-    for i in range(len(lidar_measurements)):
+    for i in range (len(lidar_measurements)):
 
         data_no_outliers=remove_outliers(lidar_measurements[i], threshold=0.07)
         lidar_filtered=smoth_filter_data(data_no_outliers)
@@ -148,8 +175,29 @@ if __name__ == "__main__":
         angles, idx_corners=calc_corner(x,y)
         idx_corners_vetor.append(idx_corners)
 
-        #for j in range(len(idx_corners)): 
-          #print( "x " + str(x[j]) + " y " + str(y[j]) + ":" + str(idx_corners[j]))
+
         
-        #print(idx_corners)
-        #plot_points(x, y, idx_corners)
+    plot_points(x_vetor[GLOBALS.NUM_EXAMPLE], y_vetor[GLOBALS.NUM_EXAMPLE], idx_corners_vetor[GLOBALS.NUM_EXAMPLE])
+    
+
+    #TASK 2-----------------------------------------
+    
+    corner_map=[]
+
+
+    #for i in range(len(x_vetor)):
+    for i in range(5):
+        print("Corner Map Before: "+ str(len(corner_map)))
+        for j in range(len(idx_corners_vetor[i])):
+            print("Corners to evaluate: "+ str(len(idx_corners_vetor[i])))
+            current_x=x_vetor[i][idx_corners_vetor[i][j]]
+            current_y=y_vetor[i][idx_corners_vetor[i][j]]
+            current_corner = [current_x, current_y]
+
+            corner_map=verify_corner_known(current_corner, corner_map, threshold=0.1)
+
+        print("Corner Map After: "+ str(len(corner_map)))
+
+        
+
+    
