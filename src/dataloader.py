@@ -24,7 +24,7 @@ def verify_corner_known(new_corner, corner_map, threshold: float=0.1):
     is_known = False
 
     for known_corner in corner_map:
-        dist=np.sqrt((new_corner[0] - known_corner[0])**2 + (new_corner[1]-corner_map[i][1])**2)
+        dist=np.sqrt((new_corner[0] - known_corner[0])**2 + (new_corner[1]-known_corner[1])**2)
         if (dist < threshold):
             print("Corner Removed")
             is_known = True
