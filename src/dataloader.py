@@ -13,6 +13,17 @@ def load_data_using_pd(data_path, debug: bool = False):
 
 # Load data function
 
+def update_pos_orientation_path(pos_robot, theta_robot, path_robot, delta_dist, delta_theta):
+        
+    theta_robot=theta_robot+delta_theta
+
+    pos_robot[0]=pos_robot[0] + delta_dist * np.cos(theta_robot)
+    pos_robot[1]=pos_robot[1] + delta_dist * np.sin(theta_robot)
+
+    path_robot.append(pos_robot[0], pos_robot[1])
+    
+    return pos_robot, theta_robot, path_robot
+
 def verify_corner_known(new_corner, corner_map, threshold: float=0.1):
 
     
@@ -40,18 +51,18 @@ def load_data(data_path, debug:bool=False):
     data = np.loadtxt(data_path)
 
     travelled_distance=data[:,0]
-    measured_variation=data[:,1]
+    angle_variation=data[:,1]
     lidar_measurements=data[:,2:]
 
     #DEBUG
     if (debug):
         print("Data shape:"+str(data.shape))
         print("Travelled distance example values:"+str(travelled_distance[:20]))
-        print("Measured variation example values:"+str(measured_variation[:20]))
+        print("Measured variation example values:"+str(angle_variation[:20]))
         print("Lidar measurements shape:"+str(lidar_measurements.shape))
 
 
-    return travelled_distance, measured_variation, lidar_measurements
+    return travelled_distance, angle_variation, lidar_measurements
 
 #Convert data to points
 def convert_data_to_points(distance, debug:bool=False):
@@ -154,7 +165,7 @@ def plot_points(x: np.ndarray, y: np.ndarray, idx_corners, save_plot: bool = Fal
 if __name__ == "__main__":
 
 
-    travelled_distance, measured_variation, lidar_measurements=load_data(data_path=GLOBALS.PATH_DATASET, debug=GLOBALS.DEBUG)
+    travelled_distance, angle_variation, lidar_measurements=load_data(data_path=GLOBALS.PATH_DATASET, debug=GLOBALS.DEBUG)
     
     #print(lidar_measurements.shape)
 
@@ -180,13 +191,39 @@ if __name__ == "__main__":
     plot_points(x_vetor[GLOBALS.NUM_EXAMPLE], y_vetor[GLOBALS.NUM_EXAMPLE], idx_corners_vetor[GLOBALS.NUM_EXAMPLE])
     
 
+
     #TASK 2-----------------------------------------
-    
+
+    pos_robot=[0, 0]
+    theta_robot=0
+
+    path_robot=[]
+
     corner_map=[]
+    
+    for i in range(len(lidar_measurements)): 
 
+        pos_robot, theta_robot, path_robot=update_pos_orientation_path(pos_robot, theta_robot, path_robot, travelled_distance[i], angle_variation[i])
+        
+        data_no_outliers=remove_outliers(lidar_measurements[i], threshold=0.07)
+        lidar_filtered=smoth_filter_data(data_no_outliers)
 
-    #for i in range(len(x_vetor)):
-    for i in range(5):
+        x_local, y_local=convert_data_to_points(lidar_filtered, debug=GLOBALS.DEBUG)       
+        angles, idx_corners=calc_corner(x_local, y_local)
+
+        for idx in idx_corners:
+
+                x_global_corner = pos_robot[0] + x_local[idx] * np.cos(theta_robot) - y_local[idx] * np.sin(theta_robot)
+                y_global_corner = pos_robot[1] + x_local[idx] * np.sin(theta_robot) + y_local[idx] * np.cos(theta_robot)
+
+                global_corner=[x_global_corner, y_global_corner]
+
+                corner_map=verify_corner_known(global_corner, corner_map, threshold=0.1)
+
+    """
+    ACHO QUE ISTO NAO ESTA COMPLETAMENTE BEM MAS BACKUP
+
+    for i in range(len(x_vetor)):
         print("Corner Map Before: "+ str(len(corner_map)))
         for j in range(len(idx_corners_vetor[i])):
             print("Corners to evaluate: "+ str(len(idx_corners_vetor[i])))
@@ -197,7 +234,8 @@ if __name__ == "__main__":
             corner_map=verify_corner_known(current_corner, corner_map, threshold=0.1)
 
         print("Corner Map After: "+ str(len(corner_map)))
-
+    """
+    
         
 
     
