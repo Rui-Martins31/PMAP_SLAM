@@ -222,6 +222,9 @@ if __name__ == "__main__":
 
     #TASK 1-----------------------------------------
     if 1 in GLOBALS.TASK:
+        ## DEBUG
+        print(f"Starting Task 1...")
+
         x_vetor=[]
         y_vetor=[]
         idx_corners_vetor=[]
@@ -250,6 +253,9 @@ if __name__ == "__main__":
 
     #TASK 2-----------------------------------------
     if 2 in GLOBALS.TASK:
+        ## DEBUG
+        print(f"Starting Task 2...")
+
         pos_robot=[0, 0]
         theta_robot=0
 
@@ -306,6 +312,8 @@ if __name__ == "__main__":
 
     #TASK 3-----------------------------------------
     if 3 in GLOBALS.TASK:
+        ## DEBUG
+        print(f"Starting Task 3...")
 
         X_state, P, Q, R=initialize_matrixes()
         path_robot=[]
@@ -314,7 +322,7 @@ if __name__ == "__main__":
 
             theta=X_state[2]
 
-            X_state[0:1], X_state[2], path_robot=update_pos_and_orientation_and_path(X_state[0:1], X_state[2], path_robot, travelled_distance[i], angle_variation[i])
+            X_state[0:2], X_state[2], path_robot=update_pos_and_orientation_and_path(X_state[0:2], X_state[2], path_robot, travelled_distance[i], angle_variation[i])
             N=len(X_state)
             F=np.eye(N)
 
@@ -323,7 +331,8 @@ if __name__ == "__main__":
             F[1][2]=travelled_distance[i]*np.cos(theta)
 
             Q_expanded=np.zeros((N, N))
-            Q_expanded[0:2][0:2]=Q
+            # Q_expanded[0:2][0:2]=Q
+            Q_expanded[0:N][0:N] = Q
 
 def predict_phase(X_state, P, Q ,path_robot, distance, angle_variation):
 
