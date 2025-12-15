@@ -5,6 +5,20 @@ import matplotlib.pyplot as plt
 import src.__config as GLOBALS
 
 
+
+def initialize_matrixes():
+
+    state_initial=np.array([0.0, 0.0, 0.0])
+
+    P_initial=np.diag([0.01, 0.01, 0.01])
+
+    Q_initial=np.diag([0.01, 0.01, 0.005])
+
+    R_initial=np.diag([0.05, 0.05])
+    
+    return state_initial, P_initial, Q_initial, R_initial
+
+
 def calc_point_dist_to_line(first_point_line, last_point_line, point_to_calc):
     
     if ((first_point_line[0]==last_point_line[0]) and (first_point_line[1]==last_point_line[1])):
@@ -66,7 +80,7 @@ def verify_corner_known(new_corner, corner_map, threshold: float=0.1):
 
     if(len(corner_map)==0):
         corner_map.append(new_corner)
-        return corner_map
+        return corner_map, False
 
     is_known = False
 
@@ -81,7 +95,7 @@ def verify_corner_known(new_corner, corner_map, threshold: float=0.1):
     if not is_known:
         corner_map.append(new_corner)
             
-    return corner_map
+    return corner_map, is_known
 
 def load_data(data_path, debug:bool=False):
     data = np.loadtxt(data_path)
@@ -207,102 +221,126 @@ if __name__ == "__main__":
     #print(lidar_measurements.shape)
 
     #TASK 1-----------------------------------------
-    x_vetor=[]
-    y_vetor=[]
-    idx_corners_vetor=[]
+    if 1 in GLOBALS.TASK:
+        x_vetor=[]
+        y_vetor=[]
+        idx_corners_vetor=[]
 
-    for i in range (len(lidar_measurements)):
+        for i in range (len(lidar_measurements)):
 
-        data_no_outliers=remove_outliers(lidar_measurements[i], threshold=0.07)
-        lidar_filtered=smoth_filter_data(data_no_outliers)
+            data_no_outliers=remove_outliers(lidar_measurements[i], threshold=0.07)
+            lidar_filtered=smoth_filter_data(data_no_outliers)
 
-        x, y=convert_data_to_points(lidar_filtered, debug=GLOBALS.DEBUG)
-        x_vetor.append(x)
-        y_vetor.append(y)
+            x, y=convert_data_to_points(lidar_filtered, debug=GLOBALS.DEBUG)
+            x_vetor.append(x)
+            y_vetor.append(y)
 
-        idx_corners=calc_corners(x, y, 0, len(x)-1, threshold=0.02)
-        idx_corners.sort()
+            idx_corners=calc_corners(x, y, 0, len(x)-1, threshold=0.02)
+            idx_corners.sort()
 
-        idx_corners_vetor.append(idx_corners)
+            idx_corners_vetor.append(idx_corners)
 
-        #plot_points(x_vetor[i], y_vetor[i], idx_corners_vetor[i])
+            #plot_points(x_vetor[i], y_vetor[i], idx_corners_vetor[i])
 
 
-        
-    plot_points(x_vetor[GLOBALS.NUM_EXAMPLE], y_vetor[GLOBALS.NUM_EXAMPLE], idx_corners_vetor[GLOBALS.NUM_EXAMPLE])
+            
+        plot_points(x_vetor[GLOBALS.NUM_EXAMPLE], y_vetor[GLOBALS.NUM_EXAMPLE], idx_corners_vetor[GLOBALS.NUM_EXAMPLE])
     
 
 
     #TASK 2-----------------------------------------
+    if 2 in GLOBALS.TASK:
+        pos_robot=[0, 0]
+        theta_robot=0
 
-    pos_robot=[0, 0]
-    theta_robot=0
+        path_robot=[]
 
-    path_robot=[]
-
-    corner_map=[]
-    
-    for i in range(len(lidar_measurements)): 
-
-        pos_robot, theta_robot, path_robot=update_pos_and_orientation_and_path(pos_robot, theta_robot, path_robot, travelled_distance[i], angle_variation[i])
+        corner_map=[]
         
+        for i in range(len(lidar_measurements)): 
+
+            pos_robot, theta_robot, path_robot=update_pos_and_orientation_and_path(pos_robot, theta_robot, path_robot, travelled_distance[i], angle_variation[i])
+            
+            
+            data_no_outliers=remove_outliers(lidar_measurements[i], threshold=0.07)
+            lidar_filtered=smoth_filter_data(data_no_outliers)
+
+            x_local, y_local=convert_data_to_points(lidar_filtered, debug=GLOBALS.DEBUG)       
+            idx_corners=calc_corners(x_local, y_local, 0, len(x_local)-1, threshold=0.02)
+            idx_corners.sort()
+            
+
+            for idx in idx_corners:
+
+                    x_global_corner = pos_robot[0] + x_local[idx] * np.cos(theta_robot) - y_local[idx] * np.sin(theta_robot)
+                    y_global_corner = pos_robot[1] + x_local[idx] * np.sin(theta_robot) + y_local[idx] * np.cos(theta_robot)
+
+                    global_corner=[x_global_corner, y_global_corner]
+
+                    corner_map, is_known = verify_corner_known(global_corner, corner_map, threshold=0.1)
+
+
+        path_array = np.array(path_robot)
         
-        data_no_outliers=remove_outliers(lidar_measurements[i], threshold=0.07)
-        lidar_filtered=smoth_filter_data(data_no_outliers)
+        # Extrair cantos do mapa
+        map_x = [c[0] for c in corner_map]
+        map_y = [c[1] for c in corner_map]
 
-        x_local, y_local=convert_data_to_points(lidar_filtered, debug=GLOBALS.DEBUG)       
-        idx_corners=calc_corners(x_local, y_local, 0, len(x_local)-1, threshold=0.02)
-        idx_corners.sort()
+        plt.figure(figsize=(10, 8))
         
+        #Desenha a linha do caminho do robô (Preto)
+        if len(path_array) > 0:
+            plt.plot(path_array[:, 0], path_array[:, 1], color='black', label='Robot Path', linewidth=1)
+        
+        #Desenha os cantos globais encontrados (Vermelho)
+        plt.scatter(map_x, map_y, color='red', marker='x', label='Global Corners')
 
-        for idx in idx_corners:
-
-                x_global_corner = pos_robot[0] + x_local[idx] * np.cos(theta_robot) - y_local[idx] * np.sin(theta_robot)
-                y_global_corner = pos_robot[1] + x_local[idx] * np.sin(theta_robot) + y_local[idx] * np.cos(theta_robot)
-
-                global_corner=[x_global_corner, y_global_corner]
-
-                corner_map=verify_corner_known(global_corner, corner_map, threshold=0.1)
-
-
-    path_array = np.array(path_robot)
+        plt.title("SLAM Task 2: Robot Path & Global Map")
+        plt.xlabel("Global X")
+        plt.ylabel("Global Y")
+        plt.axis('equal') # Importante para não distorcer o mapa
+        plt.grid(True)
+        plt.legend()
+        plt.show()
     
-    # Extrair cantos do mapa
-    map_x = [c[0] for c in corner_map]
-    map_y = [c[1] for c in corner_map]
 
-    plt.figure(figsize=(10, 8))
+    #TASK 3-----------------------------------------
+    if 3 in GLOBALS.TASK:
+
+        X_state, P, Q, R=initialize_matrixes()
+        path_robot=[]
+
+        for i in range(len(lidar_measurements)):
+
+            theta=X_state[2]
+
+            X_state[0:1], X_state[2], path_robot=update_pos_and_orientation_and_path(X_state[0:1], X_state[2], path_robot, travelled_distance[i], angle_variation[i])
+            N=len(X_state)
+            F=np.eye(N)
+
+            #Jacobiano
+            F[0][2]=-travelled_distance[i]*np.sin(theta)
+            F[1][2]=travelled_distance[i]*np.cos(theta)
+
+            Q_expanded=np.zeros((N, N))
+            Q_expanded[0:2][0:2]=Q
+
+def predict_phase(X_state, P, Q ,path_robot, distance, angle_variation):
+
+    theta=X_state[2]
+
+    X_state[0:1], X_state[2], path_robot=update_pos_and_orientation_and_path(X_state[0:1], X_state[2], path_robot, distance, angle_variation)
     
-    # 1. Desenha a linha do caminho do robô (Preto)
-    if len(path_array) > 0:
-        plt.plot(path_array[:, 0], path_array[:, 1], color='black', label='Robot Path', linewidth=1)
-    
-    # 2. Desenha os cantos globais encontrados (Vermelho)
-    plt.scatter(map_x, map_y, color='red', marker='x', label='Global Corners')
+    N=len(X_state)
+    F=np.eye(N)
 
-    plt.title("SLAM Task 2: Robot Path & Global Map")
-    plt.xlabel("Global X")
-    plt.ylabel("Global Y")
-    plt.axis('equal') # Importante para não distorcer o mapa!
-    plt.grid(True)
-    plt.legend()
-    plt.show()
-    """
-    ACHO QUE ISTO NAO ESTA COMPLETAMENTE BEM MAS BACKUP
+    #Jacobiano
+    F[0][2]=-distance*np.sin(theta)
+    F[1][2]=distance*np.cos(theta)
 
-    for i in range(len(x_vetor)):
-        print("Corner Map Before: "+ str(len(corner_map)))
-        for j in range(len(idx_corners_vetor[i])):
-            print("Corners to evaluate: "+ str(len(idx_corners_vetor[i])))
-            current_x=x_vetor[i][idx_corners_vetor[i][j]]
-            current_y=y_vetor[i][idx_corners_vetor[i][j]]
-            current_corner = [current_x, current_y]
+    Q_expanded=np.zeros((N, N))
+    Q_expanded[0:2][0:2]=Q
 
-            corner_map=verify_corner_known(current_corner, corner_map, threshold=0.1)
+    P = F @ P @ F.T + Q_expanded
 
-        print("Corner Map After: "+ str(len(corner_map)))
-    """
-
-
-
-
+    return X_state, F, Q_expanded, P
