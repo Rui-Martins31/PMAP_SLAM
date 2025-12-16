@@ -149,46 +149,69 @@ def remove_outliers(lidar_data, threshold=0.2):
     
     return data_copy
 
-""""
-def calc_corner(x, y):
+def EKF_predict_phase(X_state, P, Q, distance_variation, angle_variation):
 
-    angles=[]
-    idx_corners=[]
-
-    angles.append(0)
-
-    for i in range(1, (len(x)-1)):
-
-        prev_vetor_x=x[i]-x[i-1]
-        prev_vetor_y=y[i]-y[i-1]
-        next_vetor_x=x[i+1]-x[i]
-        next_vetor_y=y[i+1]-y[i]
-
-        prod_vet=prev_vetor_x*next_vetor_x + prev_vetor_y*next_vetor_y 
-        
-        mod_prev=np.sqrt(prev_vetor_x**2 + prev_vetor_y**2)
-        mod_next=np.sqrt(next_vetor_x**2 + next_vetor_y**2)
-
-        if (mod_prev==0 or mod_next==0):
-            angles.append(np.nan)
-            continue
-        
-        cos_ang=prod_vet/(mod_prev*mod_next)
-
-        cos_ang=np.clip(cos_ang, -1.0, 1.0)
-
-        angle=np.rad2deg(np.arccos(cos_ang))
-        angles.append(angle)
-        
-        if (angle>20):
-            idx_corners.append(i)
-
-
+    theta=X_state[2]
     
-    angles.append(0)
+    X_state[0]=X_state[0] + distance_variation * np.cos(theta)
+    X_state[1]=X_state[1] + distance_variation * np.sin(theta)
+    X_state[2]=X_state[2]+angle_variation
 
-    return angles, idx_corners
-"""
+    n=len(X_state)
+    F=np.eye(n)
+
+    #Jacobiano
+    F[0][2]=-distance_variation*np.sin(theta)
+    F[1][2]=distance_variation*np.cos(theta)
+
+    Q_new=np.zeros((n,n))
+    Q_new[0:3][0:3]=Q
+
+    P = F @ P @ F.T + Q_new
+
+    return X, P
+
+def add_corner_to_model(X, P, global_corner, R):
+
+    n=len(X)
+    
+    X=np.append(X, global_corner[0])
+    X=np.append(X, global_corner[1])
+
+    #VERIFICAR SE O P É ATUALIZADO DESTA MANEIRA
+
+    P_new=np.zeros((n+2, n+2))
+    P_new[:n,:n]=P
+    P_new[n:,n:]=R
+
+    return X, P_new
+
+def verify_register_corner(X, corner_to_compare, threshold=0.1):
+
+    #PODERÁ SE SUBSTITUIR PELA Mahalanobis data association
+
+    dist_min=999999
+    idx_min=-1
+
+    for i in range(3, len(X), 2):
+        dist = np.sqrt((corner_to_compare[0]-X[i])**2+(corner_to_compare[1]-X[i+1])**2)
+        if(dist<dist_min):
+            dist_min=dist
+            idx_min=i
+
+
+    if dist_min<threshold:
+        return idx_min
+    
+    else:
+        return None
+
+def EKF_update_phase(X, P, global_corner, corner_idx, R):
+
+    #CONTINUAR
+
+    pass
+
 def plot_points(x: np.ndarray, y: np.ndarray, idx_corners, save_plot: bool = False):
 
     plt.figure(figsize=(8, 6))
@@ -256,34 +279,42 @@ if __name__ == "__main__":
         ## DEBUG
         print(f"Starting Task 2...")
 
-        pos_robot=[0, 0]
-        theta_robot=0
-
         path_robot=[]
-
         corner_map=[]
+
+        X,P,Q,R=initialize_matrixes()
         
         for i in range(len(lidar_measurements)): 
 
-            pos_robot, theta_robot, path_robot=update_pos_and_orientation_and_path(pos_robot, theta_robot, path_robot, travelled_distance[i], angle_variation[i])
-            
-            
+
+            X, P = EKF_predict_phase(X, P, Q, travelled_distance[i], angle_variation[i])
+
+            path_robot.append(X[0:2])
+                    
             data_no_outliers=remove_outliers(lidar_measurements[i], threshold=0.07)
             lidar_filtered=smoth_filter_data(data_no_outliers)
-
-            x_local, y_local=convert_data_to_points(lidar_filtered, debug=GLOBALS.DEBUG)       
+            x_local, y_local=convert_data_to_points(lidar_filtered, debug=GLOBALS.DEBUG)   
+            
             idx_corners=calc_corners(x_local, y_local, 0, len(x_local)-1, threshold=0.02)
             idx_corners.sort()
             
 
             for idx in idx_corners:
 
-                    x_global_corner = pos_robot[0] + x_local[idx] * np.cos(theta_robot) - y_local[idx] * np.sin(theta_robot)
-                    y_global_corner = pos_robot[1] + x_local[idx] * np.sin(theta_robot) + y_local[idx] * np.cos(theta_robot)
+                x_global_corner = X[0] + x_local[idx] * np.cos(X[2]) - y_local[idx] * np.sin(X[2])
+                y_global_corner = X[1] + x_local[idx] * np.sin(X[2]) + y_local[idx] * np.cos(X[2])
 
-                    global_corner=[x_global_corner, y_global_corner]
+                global_corner=[x_global_corner, y_global_corner]
 
-                    corner_map, is_known = verify_corner_known(global_corner, corner_map, threshold=0.1)
+                registered_corner_idx=verify_register_corner(X, global_corner, threshold=0.1)
+
+                if registered_corner_idx is None:
+                    X, P=add_corner_to_model(X, P, global_corner, R)
+                
+                else:
+                    X, P=EKF_update_phase(X, P, global_corner, registered_corner_idx, R)
+
+                    
 
 
         path_array = np.array(path_robot)
@@ -310,46 +341,4 @@ if __name__ == "__main__":
         plt.show()
     
 
-    #TASK 3-----------------------------------------
-    if 3 in GLOBALS.TASK:
-        ## DEBUG
-        print(f"Starting Task 3...")
 
-        X_state, P, Q, R=initialize_matrixes()
-        path_robot=[]
-
-        for i in range(len(lidar_measurements)):
-
-            theta=X_state[2]
-
-            X_state[0:2], X_state[2], path_robot=update_pos_and_orientation_and_path(X_state[0:2], X_state[2], path_robot, travelled_distance[i], angle_variation[i])
-            N=len(X_state)
-            F=np.eye(N)
-
-            #Jacobiano
-            F[0][2]=-travelled_distance[i]*np.sin(theta)
-            F[1][2]=travelled_distance[i]*np.cos(theta)
-
-            Q_expanded=np.zeros((N, N))
-            # Q_expanded[0:2][0:2]=Q
-            Q_expanded[0:N][0:N] = Q
-
-def predict_phase(X_state, P, Q ,path_robot, distance, angle_variation):
-
-    theta=X_state[2]
-
-    X_state[0:1], X_state[2], path_robot=update_pos_and_orientation_and_path(X_state[0:1], X_state[2], path_robot, distance, angle_variation)
-    
-    N=len(X_state)
-    F=np.eye(N)
-
-    #Jacobiano
-    F[0][2]=-distance*np.sin(theta)
-    F[1][2]=distance*np.cos(theta)
-
-    Q_expanded=np.zeros((N, N))
-    Q_expanded[0:2][0:2]=Q
-
-    P = F @ P @ F.T + Q_expanded
-
-    return X_state, F, Q_expanded, P
