@@ -317,27 +317,18 @@ if __name__ == "__main__":
                     
 
 
-        path_array = np.array(path_robot)
-        
-        # Extrair cantos do mapa
-        map_x = [c[0] for c in corner_map]
-        map_y = [c[1] for c in corner_map]
+        # Plot
+        path = np.array(path_robot)
+        corners_x = X[3::2]
+        corners_y = X[4::2]
 
-        plt.figure(figsize=(10, 8))
-        
-        #Desenha a linha do caminho do robô (Preto)
-        if len(path_array) > 0:
-            plt.plot(path_array[:, 0], path_array[:, 1], color='black', label='Robot Path', linewidth=1)
-        
-        #Desenha os cantos globais encontrados (Vermelho)
-        plt.scatter(map_x, map_y, color='red', marker='x', label='Global Corners')
-
-        plt.title("SLAM Task 2: Robot Path & Global Map")
-        plt.xlabel("Global X")
-        plt.ylabel("Global Y")
-        plt.axis('equal') # Importante para não distorcer o mapa
-        plt.grid(True)
+        plt.figure(figsize=(10,8))
+        plt.plot(path[:,0], path[:,1], 'k-', label="Robot Path")
+        plt.scatter(corners_x, corners_y, c='r', marker='x', label="Corners")
+        plt.axis("equal")
+        plt.grid()
         plt.legend()
+        plt.title("Task 2 – EKF SLAM")
         plt.show()
     
 
