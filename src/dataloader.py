@@ -6,17 +6,6 @@ import src.__config as GLOBALS
 
 
 
-def initialize_matrixes():
-
-    state_initial=np.array([0.0, 0.0, 0.0])
-
-    P_initial=np.diag([0.01, 0.01, 0.01])
-
-    Q_initial=np.diag([0.01, 0.01, 0.005])
-
-    R_initial=np.diag([0.05, 0.05])
-    
-    return state_initial, P_initial, Q_initial, R_initial
 
 
 def calc_point_dist_to_line(first_point_line, last_point_line, point_to_calc):
@@ -149,6 +138,19 @@ def remove_outliers(lidar_data, threshold=0.2):
     
     return data_copy
 
+def initialize_matrixes():
+
+    state_initial=np.array([0.0, 0.0, 0.0])
+
+    P_initial=np.diag([0.01, 0.01, 0.01])
+
+    Q_initial=np.diag([0.01, 0.01, 0.005])
+
+    R_initial=np.diag([0.05, 0.05])
+    
+    return state_initial, P_initial, Q_initial, R_initial
+
+
 def EKF_predict_phase(X_state, P, Q, distance_variation, angle_variation):
 
     theta=X_state[2]
@@ -166,6 +168,8 @@ def EKF_predict_phase(X_state, P, Q, distance_variation, angle_variation):
 
     Q_new=np.zeros((n,n))
     Q_new[0:3][0:3]=Q
+
+    #VERIFICAR SE O P É ATUALIZADO DESTA MANEIRA
 
     P = F @ P @ F.T + Q_new
 
@@ -208,9 +212,24 @@ def verify_register_corner(X, corner_to_compare, threshold=0.1):
 
 def EKF_update_phase(X, P, global_corner, corner_idx, R):
 
-    #CONTINUAR
+    z_real=[global_corner[0], global_corner[1]]
+    z_prev=[X[corner_idx], X[corner_idx+1]]
+    
+    n=len(X)
 
-    pass
+    H=np.zeros((2, n))
+    H[0, corner_idx]=1
+    H[1, corner_idx+1]=1
+
+    S=H @ P @ H.T + R
+    K= P @ H.T @ np.linalg.inv(S)
+    X=X + K @ (z_real-z_prev)
+    P=P - K @ H @ P
+
+
+    return X, P
+
+
 
 def plot_points(x: np.ndarray, y: np.ndarray, idx_corners, save_plot: bool = False):
 
