@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import math
 
 import src.__config as GLOBALS
 
@@ -42,8 +43,9 @@ class Map:
         # Corner detection parameters
         self.angle_threshold: float = 30.0    # [degrees]
         self.distance_threshold: float = 0.5  # [m]
+        self.cluster_jump_dist: float  = 0.2  # [m]
 
-    def compute_points_position(self, robot_homo_matrix: np.ndarray, lidar_ranges: np.ndarray, lidar_angles: np.ndarray) -> None:
+    def compute_points_position(self, robot_homo_matrix: np.ndarray, lidar_ranges: np.ndarray, lidar_angles: np.ndarray, scan_idx: int) -> None:
         scan_points: list[Point] = []
 
         for angle, lidar_r in zip(lidar_angles, lidar_ranges):
@@ -66,8 +68,115 @@ class Map:
         # Update
         self.points.append(tuple(scan_points))
 
-    def compute_corners(self):
-        pass
+        # Detect corners
+        if len(scan_points) > 0:
+            self.compute_corners(scan_points, scan_idx)
+
+    def compute_corners(self, scan_points: list[Point], scan_idx: int):
+        """Cluster -> Smooth -> Detect Angles"""
+        
+        # Clustering (Split by distance jumps)
+        clusters = []
+        current_cluster = [scan_points[0]]
+
+        for i in range(1, len(scan_points)):
+            p_prev = scan_points[i-1]
+            p_curr = scan_points[i]
+
+            # Calculate distance between consecutive points
+            dist = math.sqrt((p_curr.x - p_prev.x)**2 + (p_curr.y - p_prev.y)**2)
+
+            if dist > self.cluster_jump_dist:
+                # Start new cluster
+                if len(current_cluster) > 5:
+                    clusters.append(current_cluster)
+                current_cluster = [p_curr]
+            else:
+                current_cluster.append(p_curr)
+        
+        # Append the last cluster
+        if len(current_cluster) > 5:
+            clusters.append(current_cluster)
+
+        # Smoothing and Detection per cluster
+        detected_corners = []
+
+        for cluster in clusters:
+            # We need at least 3 points to form an angle
+            if len(cluster) < 5: 
+                continue
+
+            # Manual Smoothing (Simple Moving Average)
+            smoothed_coords = []
+            window_size     = 3
+            
+            for i in range(len(cluster)):
+                # Handle edges by clamping
+                start_idx = max(0, i - 1)
+                end_idx   = min(len(cluster), i + 2)
+                
+                # Sum x and y
+                sum_x, sum_y = 0.0, 0.0
+                count = 0
+                for j in range(start_idx, end_idx):
+                    sum_x += cluster[j].x
+                    sum_y += cluster[j].y
+                    count += 1
+                
+                smoothed_coords.append((sum_x / count, sum_y / count))
+
+            # Detect Angles
+            for i in range(1, len(smoothed_coords) - 1):
+                prev_x, prev_y = smoothed_coords[i-1]
+                curr_x, curr_y = smoothed_coords[i]
+                next_x, next_y = smoothed_coords[i+1]
+
+                # Vector 1: Prev -> Curr
+                v1_x = curr_x - prev_x
+                v1_y = curr_y - prev_y
+                
+                # Vector 2: Curr -> Next
+                v2_x = next_x - curr_x
+                v2_y = next_y - curr_y
+
+                # Magnitudes
+                mag_v1 = math.sqrt(v1_x**2 + v1_y**2)
+                mag_v2 = math.sqrt(v2_x**2 + v2_y**2)
+
+                if mag_v1 == 0 or mag_v2 == 0:
+                    continue
+
+                # Dot product
+                dot_product = (v1_x * v2_x) + (v1_y * v2_y)
+                
+                # Cosine rule
+                cos_angle = max(-1.0, min(1.0, dot_product / (mag_v1 * mag_v2)))
+                angle_rad = math.acos(cos_angle)
+                angle_deg = math.degrees(angle_rad)
+
+                # Check threshold
+                if angle_deg > self.angle_threshold:
+                    detected_corners.append((curr_x, curr_y))
+
+        # Update Landmarks
+        for (cx, cy) in detected_corners:
+            self._associate_and_update(cx, cy, scan_idx)
+
+    def _associate_and_update(self, x: float, y: float, scan_idx: int):
+        best_landmark = None
+        min_dist = self.distance_threshold
+
+        # Find nearest
+        for landmark in self.landmarks:
+            d = math.sqrt((landmark.x - x)**2 + (landmark.y - y)**2)
+            if d < min_dist:
+                min_dist = d
+                best_landmark = landmark
+        
+        if best_landmark:
+            best_landmark.update(x, y, scan_idx)
+        else:
+            self.landmarks.append(Landmark(x, y, scan_idx))
 
     # Helpers
     def plot_map(self):
@@ -77,6 +186,11 @@ class Map:
             x_coords = [point.x for point in scan_points]
             y_coords = [point.y for point in scan_points]
             plt.scatter(x_coords, y_coords, c='blue', s=1, alpha=0.5)
+
+        # Plot Landmarks
+        lx = [lm.x for lm in self.landmarks]
+        ly = [lm.y for lm in self.landmarks]
+        plt.scatter(lx, ly, c='red', s=50, marker='x', label='Corners')
 
         plt.xlabel('X position (m)')
         plt.ylabel('Y position (m)')

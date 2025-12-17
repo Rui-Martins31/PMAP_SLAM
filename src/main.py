@@ -19,7 +19,8 @@ def main():
         map.compute_points_position(
             robot_homo_matrix=robot.get_homogeneous_matrix(),
             lidar_ranges=lidar.get_ranges(idx),
-            lidar_angles=lidar.get_angles()
+            lidar_angles=lidar.get_angles(),
+            scan_idx=idx
         )
 
     # Visualization
