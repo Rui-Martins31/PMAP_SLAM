@@ -9,13 +9,39 @@ class Point:
         self.x: float = 0.0
         self.y: float = 0.0
 
+class Landmark:
+    def __init__(self, x: float, y: float, scan_idx: int):
+        # Position in world frame
+        self.x: float = x
+        self.y: float = y
+
+        # Tracking information
+        self.first_seen: int        = scan_idx
+        self.last_seen: int         = scan_idx
+        self.observation_count: int = 1
+
+    def update(self, x: float, y: float, scan_idx: int):
+        """Update landmark position with new observation"""
+        
+        # Average
+        self.x = (self.x * self.observation_count + x) / (self.observation_count + 1)
+        self.y = (self.y * self.observation_count + y) / (self.observation_count + 1)
+
+        # Update
+        self.last_seen          = scan_idx
+        self.observation_count += 1
+
 class Map:
     def __init__(self):
         # Points
         self.points: list[tuple[Point]] = []
 
         # Landmarks
-        self.landmarks: list[tuple[Point]] = []
+        self.landmarks: list[Landmark] = []
+
+        # Corner detection parameters
+        self.angle_threshold: float = 30.0    # [degrees]
+        self.distance_threshold: float = 0.5  # [m]
 
     def compute_points_position(self, robot_homo_matrix: np.ndarray, lidar_ranges: np.ndarray, lidar_angles: np.ndarray) -> None:
         scan_points: list[Point] = []
@@ -37,6 +63,7 @@ class Map:
 
             scan_points.append(point_world)
 
+        # Update
         self.points.append(tuple(scan_points))
 
     def compute_corners(self):
