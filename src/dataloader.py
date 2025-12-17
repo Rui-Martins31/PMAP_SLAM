@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import os
 
 
 import src.__config as GLOBALS
@@ -176,7 +177,7 @@ def EKF_predict_phase(X_state, P, Q, distance_variation, angle_variation):
 
     P = F @ P @ F.T + Q_new
 
-    return X, P
+    return X_state, P
 
 def add_corner_to_model(X, P, global_corner, R):
 
@@ -197,6 +198,10 @@ def verify_register_corner(X, corner_to_compare, threshold=0.1):
 
     #PODERÁ SE SUBSTITUIR PELA Mahalanobis data association
 
+    # If no corners in state yet, return None
+    if len(X) <= 3:
+        return None
+
     dist_min=999999
     idx_min=-1
 
@@ -209,26 +214,71 @@ def verify_register_corner(X, corner_to_compare, threshold=0.1):
 
     if dist_min<threshold:
         return idx_min
-    
+
     else:
         return None
 
-def EKF_update_phase(X, P, global_corner, corner_idx, R):
+def EKF_update_phase(X, P, local_corner, corner_idx, R):
+    """
+    EKF Update phase with proper observation model.
 
-    z_real=np.asarray([global_corner[0], global_corner[1]])
-    z_prev=np.asarray([X[corner_idx], X[corner_idx+1]])
-    
-    n=len(X)
+    Observation model: z = h(X) where corner is observed in robot's local frame
+    h(X) transforms known corner from global to local frame:
+    z_x = cos(θ)*(m_x - x) + sin(θ)*(m_y - y)
+    z_y = -sin(θ)*(m_x - x) + cos(θ)*(m_y - y)
 
-    H=np.zeros((2, n))
-    H[0, corner_idx]=1
-    H[1, corner_idx+1]=1
+    where (x,y,θ) is robot pose and (m_x, m_y) is corner position in state
+    """
 
-    S=H @ P @ H.T + R
-    K= P @ H.T @ np.linalg.inv(S)
-    X=X + K @ (z_real-z_prev)
-    P=P - K @ H @ P
+    # Robot pose
+    x_robot = X[0]
+    y_robot = X[1]
+    theta = X[2]
 
+    # Corner position from state
+    m_x = X[corner_idx]
+    m_y = X[corner_idx+1]
+
+    # Actual observation in local frame
+    z_real = np.asarray([local_corner[0], local_corner[1]])
+
+    # Predicted observation (transform corner from global to local frame)
+    dx = m_x - x_robot
+    dy = m_y - y_robot
+    z_pred = np.asarray([
+        np.cos(theta) * dx + np.sin(theta) * dy,
+        -np.sin(theta) * dx + np.cos(theta) * dy
+    ])
+
+    n = len(X)
+
+    # Jacobian H: derivatives of observation model
+    H = np.zeros((2, n))
+
+    # Derivatives w.r.t. robot x (index 0)
+    H[0, 0] = -np.cos(theta)
+    H[1, 0] = np.sin(theta)
+
+    # Derivatives w.r.t. robot y (index 1)
+    H[0, 1] = -np.sin(theta)
+    H[1, 1] = -np.cos(theta)
+
+    # Derivatives w.r.t. robot theta (index 2)
+    H[0, 2] = -np.sin(theta) * dx + np.cos(theta) * dy
+    H[1, 2] = -np.cos(theta) * dx - np.sin(theta) * dy
+
+    # Derivatives w.r.t. corner position (indices corner_idx, corner_idx+1)
+    H[0, corner_idx] = np.cos(theta)
+    H[0, corner_idx+1] = np.sin(theta)
+    H[1, corner_idx] = -np.sin(theta)
+    H[1, corner_idx+1] = np.cos(theta)
+
+    # Standard EKF update
+    innovation = z_real - z_pred
+    S = H @ P @ H.T + R
+    K = P @ H.T @ np.linalg.inv(S)
+    X = X + K @ innovation
+    P = P - K @ H @ P
 
     return X, P
 
@@ -296,6 +346,13 @@ def plot_points(x: np.ndarray, y: np.ndarray, idx_corners, save_plot: bool = Fal
     plt.ylabel('Y coordinates')
     plt.grid(True)
     plt.legend()
+
+    save_dir = GLOBALS.PATH_OUTPUT
+    filename = "corners.png"
+
+    os.makedirs(save_dir, exist_ok=True)
+    path_fig = os.path.join(save_dir, filename)
+    plt.savefig(path_fig, dpi=300, bbox_inches='tight')
     plt.show()
 
     if save_plot:
@@ -348,9 +405,11 @@ if __name__ == "__main__":
 
         path_robot=[]
         corner_map=[]
+        num_corners_added = 0
+        num_corners_updated = 0
 
         X,P,Q,R=initialize_matrixes()
-        
+
         for i in range(len(lidar_measurements)): 
 
             print(str(i)+ "/" + str(len(lidar_measurements)))
@@ -363,32 +422,53 @@ if __name__ == "__main__":
             lidar_filtered=smoth_filter_data(data_no_outliers)
             x_local, y_local=convert_data_to_points(lidar_filtered, debug=GLOBALS.DEBUG)   
             
-            idx_corners=calc_corners(x_local, y_local, 0, len(x_local)-1, threshold=0.075)
+            idx_corners=calc_corners(x_local, y_local, 0, len(x_local)-1, threshold=0.10)
             idx_corners.sort()
             
 
             for idx in idx_corners:
 
+                # Local corner coordinates (observed in robot frame)
+                local_corner = [x_local[idx], y_local[idx]]
+
+                # Transform to global for data association
                 x_global_corner = X[0] + x_local[idx] * np.cos(X[2]) - y_local[idx] * np.sin(X[2])
                 y_global_corner = X[1] + x_local[idx] * np.sin(X[2]) + y_local[idx] * np.cos(X[2])
+                global_corner = [x_global_corner, y_global_corner]
 
-                global_corner=[x_global_corner, y_global_corner]
-
-                registered_corner_idx=verify_register_corner(X, global_corner, threshold=0.2)
+                registered_corner_idx=verify_register_corner(X, global_corner, threshold=0.7)
 
                 if registered_corner_idx is None:
+                    # New corner - add to map using global coordinates
                     X, P=add_corner_to_model(X, P, global_corner, R)
-                
+                    num_corners_added += 1
+
                 else:
-                    X, P=EKF_update_phase(X, P, global_corner, registered_corner_idx, R)
+                    # Known corner - update using LOCAL observation
+                    X, P=EKF_update_phase(X, P, local_corner, registered_corner_idx, R)
+                    num_corners_updated += 1
 
                     
 
+
+        # Statistics
+        print(f"\n=== EKF SLAM Statistics ===")
+        print(f"Total corners added: {num_corners_added}")
+        print(f"Total corner updates: {num_corners_updated}")
+        print(f"Final number of unique corners in map: {(len(X)-3)//2}")
+        print(f"Ratio of updates to additions: {num_corners_updated/max(num_corners_added,1):.2f}")
 
         # Plot
         path = np.array(path_robot)
         corners_x = X[3::2]
         corners_y = X[4::2]
+
+        # File
+        save_dir = GLOBALS.PATH_OUTPUT
+        filename = "ekf_slam_result.png"
+
+        os.makedirs(save_dir, exist_ok=True)
+        path_fig = os.path.join(save_dir, filename)
 
         plt.figure(figsize=(10,8))
         plt.plot(path[:,0], path[:,1], 'k-', label="Robot Path")
@@ -396,7 +476,8 @@ if __name__ == "__main__":
         plt.axis("equal")
         plt.grid()
         plt.legend()
-        plt.title("Task 2 – EKF SLAM")
+        plt.title("Task 2 - EKF SLAM")
+        plt.savefig(path_fig, dpi=300, bbox_inches='tight')
         plt.show()
     
 
@@ -424,7 +505,7 @@ if __name__ == "__main__":
                 lidar_filtered=smoth_filter_data(data_no_outliers)
                 x_local, y_local=convert_data_to_points(lidar_filtered, debug=GLOBALS.DEBUG)   
 
-                idx_corners=calc_corners(x_local, y_local, 0, len(x_local)-1, threshold=0.075)
+                idx_corners=calc_corners(x_local, y_local, 0, len(x_local)-1, threshold=0.10)
                 idx_corners.sort()
 
                 for idx in idx_corners:
@@ -434,7 +515,7 @@ if __name__ == "__main__":
 
                     global_corner=[x_global_corner, y_global_corner]
 
-                    nodes_corners, idx_verified_corner=verify_and_add_corner(nodes_corners, global_corner, threshold=0.2)
+                    nodes_corners, idx_verified_corner=verify_and_add_corner(nodes_corners, global_corner, threshold=0.5)
                     constrains_observation_corners=add_corner_constrain(constrains_observation_corners, len(nodes_robot_pos)-1, x_local[idx], y_local[idx], idx_verified_corner)
 
 

@@ -1,5 +1,6 @@
 # Paths
 PATH_DATASET: str = "data/data.txt"
+PATH_OUTPUT: str  = "output/"
 
 # Debug
 DEBUG: bool = False
