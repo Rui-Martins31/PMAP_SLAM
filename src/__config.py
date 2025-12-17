@@ -4,5 +4,5 @@ PATH_DATASET: str = "data/data.txt"
 # Debug
 DEBUG: bool = False
 NUM_EXAMPLE: int=300
-TASK: int=[1, 2, 3]
+TASK: int=[2]
 

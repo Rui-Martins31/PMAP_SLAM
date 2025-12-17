@@ -146,7 +146,7 @@ def initialize_matrixes():
 
     Q_initial=np.diag([0.01, 0.01, 0.005])
 
-    R_initial=np.diag([0.05, 0.05])
+    R_initial=np.diag([0.005, 0.005])
     
     return state_initial, P_initial, Q_initial, R_initial
 
@@ -166,8 +166,11 @@ def EKF_predict_phase(X_state, P, Q, distance_variation, angle_variation):
     F[0][2]=-distance_variation*np.sin(theta)
     F[1][2]=distance_variation*np.cos(theta)
 
+    #print(Q)
     Q_new=np.zeros((n,n))
-    Q_new[0:3][0:3]=Q
+    #print(Q_new[0:3, 0:3])
+    Q_new[0:3, 0:3]=Q
+    
 
     #VERIFICAR SE O P É ATUALIZADO DESTA MANEIRA
 
@@ -212,8 +215,8 @@ def verify_register_corner(X, corner_to_compare, threshold=0.1):
 
 def EKF_update_phase(X, P, global_corner, corner_idx, R):
 
-    z_real=[global_corner[0], global_corner[1]]
-    z_prev=[X[corner_idx], X[corner_idx+1]]
+    z_real=np.asarray([global_corner[0], global_corner[1]])
+    z_prev=np.asarray([X[corner_idx], X[corner_idx+1]])
     
     n=len(X)
 
@@ -230,6 +233,51 @@ def EKF_update_phase(X, P, global_corner, corner_idx, R):
     return X, P
 
 
+def update_pose_nodes_and_constrains(nodes_robot_pos, constrains_robot_mov, distance_variation, angle_variation):
+
+    iteration=len(nodes_robot_pos)
+
+    new_x=nodes_robot_pos[iteration-1][0]+distance_variation*np.cos(nodes_robot_pos[iteration-1][2])
+    new_y=nodes_robot_pos[iteration-1][1]+distance_variation*np.sin(nodes_robot_pos[iteration-1][2])
+    new_theta=nodes_robot_pos[iteration-1][2]+angle_variation
+
+    nodes_robot_pos.append(np.asarray([new_x, new_y, new_theta]))
+
+    constrains_robot_mov.append(np.asarray([iteration-1, iteration, distance_variation, angle_variation]))
+
+    return nodes_robot_pos, constrains_robot_mov
+
+
+def verify_and_add_corner(nodes_corners, corner_to_verify,  threshold):
+
+    dist_min=999999
+    idx_min=-1
+
+    for i in range(0, len(nodes_corners)):
+        dist = np.sqrt((corner_to_verify[0]-nodes_corners[i][0])**2+(corner_to_verify[1]-nodes_corners[i][1])**2)
+        if(dist<dist_min):
+            dist_min=dist
+            idx_min=i
+
+
+    if dist_min>=threshold:
+        idx_min=-1
+    
+    if idx_min==-1:
+        nodes_corners.append(corner_to_verify)
+        return nodes_corners, len(nodes_corners)-1
+    else:
+        return nodes_corners, idx_min
+ 
+    
+    
+
+def add_corner_constrain(constrains_observation_corners, idx_pos, x_local, y_local, idx_corner):
+    
+    constrain=np.asarray([idx_pos, idx_corner, x_local, y_local])
+    constrains_observation_corners.append(constrain)
+    
+    return constrains_observation_corners
 
 def plot_points(x: np.ndarray, y: np.ndarray, idx_corners, save_plot: bool = False):
 
@@ -280,7 +328,7 @@ if __name__ == "__main__":
             x_vetor.append(x)
             y_vetor.append(y)
 
-            idx_corners=calc_corners(x, y, 0, len(x)-1, threshold=0.02)
+            idx_corners=calc_corners(x, y, 0, len(x)-1, threshold=0.075)
             idx_corners.sort()
 
             idx_corners_vetor.append(idx_corners)
@@ -305,6 +353,7 @@ if __name__ == "__main__":
         
         for i in range(len(lidar_measurements)): 
 
+            print(str(i)+ "/" + str(len(lidar_measurements)))
 
             X, P = EKF_predict_phase(X, P, Q, travelled_distance[i], angle_variation[i])
 
@@ -314,7 +363,7 @@ if __name__ == "__main__":
             lidar_filtered=smoth_filter_data(data_no_outliers)
             x_local, y_local=convert_data_to_points(lidar_filtered, debug=GLOBALS.DEBUG)   
             
-            idx_corners=calc_corners(x_local, y_local, 0, len(x_local)-1, threshold=0.02)
+            idx_corners=calc_corners(x_local, y_local, 0, len(x_local)-1, threshold=0.075)
             idx_corners.sort()
             
 
@@ -325,7 +374,7 @@ if __name__ == "__main__":
 
                 global_corner=[x_global_corner, y_global_corner]
 
-                registered_corner_idx=verify_register_corner(X, global_corner, threshold=0.1)
+                registered_corner_idx=verify_register_corner(X, global_corner, threshold=0.2)
 
                 if registered_corner_idx is None:
                     X, P=add_corner_to_model(X, P, global_corner, R)
@@ -350,5 +399,45 @@ if __name__ == "__main__":
         plt.title("Task 2 – EKF SLAM")
         plt.show()
     
+
+        if 3 in GLOBALS.TASK:
+            ## DEBUG
+            print(f"Starting Task 3...")
+            
+            #nodes_robot_pos=[x, y, theta]
+            nodes_robot_pos=[]
+            #nodes_robot_pos=[x, y]
+            nodes_corners=[]
+            
+            #constrains_robot_mov=[node_pos_origin, node_pos_dest, distance_variation, angle_variation]
+            constrains_robot_mov=[]
+            #constrains_observation_corners=[pos_node_id, corner_node_id, x_local, y_local]
+            constrains_observation_corners=[]
+
+            nodes_robot_pos.append([0, 0, 0])
+
+            for i in range(len(lidar_measurements)):
+                
+                update_pose_nodes_and_constrains(nodes_robot_pos, constrains_robot_mov, travelled_distance[i], angle_variation[i])
+
+                data_no_outliers=remove_outliers(lidar_measurements[i], threshold=0.07)
+                lidar_filtered=smoth_filter_data(data_no_outliers)
+                x_local, y_local=convert_data_to_points(lidar_filtered, debug=GLOBALS.DEBUG)   
+
+                idx_corners=calc_corners(x_local, y_local, 0, len(x_local)-1, threshold=0.075)
+                idx_corners.sort()
+
+                for idx in idx_corners:
+
+                    x_global_corner = nodes_robot_pos[-1][0] + x_local[idx] * np.cos(nodes_robot_pos[-1][2]) - y_local[idx] * np.sin(nodes_robot_pos[-1][2])
+                    y_global_corner = nodes_robot_pos[-1][1] + x_local[idx] * np.sin(nodes_robot_pos[-1][2]) + y_local[idx] * np.cos(nodes_robot_pos[-1][2])
+
+                    global_corner=[x_global_corner, y_global_corner]
+
+                    nodes_corners, idx_verified_corner=verify_and_add_corner(nodes_corners, global_corner, threshold=0.2)
+                    constrains_observation_corners=add_corner_constrain(constrains_observation_corners, len(nodes_robot_pos)-1, x_local[idx], y_local[idx], idx_verified_corner)
+
+
+                    
 
 
