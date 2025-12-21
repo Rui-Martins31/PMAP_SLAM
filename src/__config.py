@@ -21,5 +21,7 @@ TASK: int=[2]
 
 # Corner Detection
 CORNER_DETECT_ANGLE_THRESHOLD: float        = 45.0  # [degrees]
-CORNER_DETECT_DISTANCE_THRESHOLD: float     = 1   # [m]
-CORNER_DETECT_CLUSTER_JUMP_DISTANCE: float  = 0.2   # [m]
+CORNER_DETECT_DISTANCE_THRESHOLD: float     = 0.1   # [m]
+CORNER_DETECT_USE_CLUSTERING: bool          = False
+CORNER_DETECT_CLUSTER_JUMP_DISTANCE: float  = 0.1   # [m]
+CORNER_DETECT_SMOOTH_WINDOW_SIZE: int       = 3
