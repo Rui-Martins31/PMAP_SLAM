@@ -26,6 +26,7 @@ def main():
     # Visualization
     robot.plot_trajectory()
     map.plot_map()
+    map.plot_snapshots()
         
 
 

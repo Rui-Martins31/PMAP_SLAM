@@ -10,6 +10,16 @@ class Point:
         self.x: float = 0.0
         self.y: float = 0.0
 
+class Observation: 
+    def __init__(self, distance: float, angle: float, robot_homo_matrix: np.ndarray):
+        
+        # Observation
+        self.dist: float  = distance
+        self.angle: float = angle
+
+        # Robot transformation
+        self.homo_matrix: np.ndarray = robot_homo_matrix
+
 class Landmark:
     def __init__(self, x: float, y: float, scan_idx: int):
         # Position in world frame
@@ -35,18 +45,20 @@ class Landmark:
 class Map:
     def __init__(self):
         # Points
-        self.points: list[tuple[Point]] = []
+        self.points_world_frame: list[tuple[Point]] = []          # x, y
+        self.points_robot_frame: list[tuple[Observation]] = []    # dist, angle
 
         # Landmarks
         self.landmarks: list[Landmark] = []
 
         # Corner detection parameters
-        self.angle_threshold: float = 30.0    # [degrees]
-        self.distance_threshold: float = 0.5  # [m]
-        self.cluster_jump_dist: float  = 0.2  # [m]
+        self.angle_threshold: float    = GLOBALS.CORNER_DETECT_ANGLE_THRESHOLD        # [degrees]
+        self.distance_threshold: float = GLOBALS.CORNER_DETECT_DISTANCE_THRESHOLD     # [m]
+        self.cluster_jump_dist: float  = GLOBALS.CORNER_DETECT_CLUSTER_JUMP_DISTANCE  # [m]
 
     def compute_points_position(self, robot_homo_matrix: np.ndarray, lidar_ranges: np.ndarray, lidar_angles: np.ndarray, scan_idx: int) -> None:
-        scan_points: list[Point] = []
+        scan_points_world_frame: list[Point] = []
+        scan_points_robot_frame: list[Observation] = []
 
         for angle, lidar_r in zip(lidar_angles, lidar_ranges):
             # Position in robot frame
@@ -63,14 +75,16 @@ class Map:
             point_world.x = _point_world[0]
             point_world.y = _point_world[1]
 
-            scan_points.append(point_world)
+            scan_points_world_frame.append(point_world)
+            scan_points_robot_frame.append(Observation(lidar_r, angle, robot_homo_matrix))
 
         # Update
-        self.points.append(tuple(scan_points))
+        self.points_world_frame.append(tuple(scan_points_world_frame))
+        self.points_robot_frame.append(tuple(scan_points_robot_frame))
 
         # Detect corners
-        if len(scan_points) > 0:
-            self.compute_corners(scan_points, scan_idx)
+        if len(scan_points_world_frame) > 0:
+            self.compute_corners(scan_points_world_frame, scan_idx)
 
     def compute_corners(self, scan_points: list[Point], scan_idx: int):
         """Cluster -> Smooth -> Detect Angles"""
@@ -179,10 +193,46 @@ class Map:
             self.landmarks.append(Landmark(x, y, scan_idx))
 
     # Helpers
+    def plot_snapshots(self, steps: int = 10):
+        """Save each scan as a snapshot showing accumulated map points."""
+
+        print(f"[Map](plot_snapshots) Saving {len(self.points_world_frame)} snapshots...")
+
+        for scan_idx in range(0, len(self.points_world_frame), steps):
+            plt.figure(figsize=(10, 8))
+
+            # Plot points
+            scan_points = self.points_world_frame[scan_idx]
+            x_coords    = [point.x for point in scan_points]
+            y_coords    = [point.y for point in scan_points]
+            plt.scatter(x_coords, y_coords, c='blue', s=1, alpha=0.5)
+
+            # Plot landmarks from current scan only
+            lx = [lm.x for lm in self.landmarks if lm.first_seen == scan_idx]
+            ly = [lm.y for lm in self.landmarks if lm.first_seen == scan_idx]
+            if lx:
+                plt.scatter(lx, ly, c='red', s=50, marker='x', label='Corners')
+
+            plt.xlabel('X position (m)')
+            plt.ylabel('Y position (m)')
+            plt.title(f'Odometry Snapshot {scan_idx:04d}')
+            plt.grid(True, alpha=0.3)
+            plt.axis('equal')
+            plt.tight_layout()
+            plt.savefig(f"{GLOBALS.PATH_ODOMETRY}snapshot_{scan_idx:04d}.png")
+            plt.close()
+
+        print(f"[Map](plot_snapshots) Snapshots saved to {GLOBALS.PATH_ODOMETRY}")
+
     def plot_map(self):
+
+        # Statistics
+        print(f"[Map](plot_map) Detected {len(self.landmarks)} corners")
+
+        # Plot
         plt.figure(figsize=(10, 8))
 
-        for scan_points in self.points:
+        for scan_points in self.points_world_frame:
             x_coords = [point.x for point in scan_points]
             y_coords = [point.y for point in scan_points]
             plt.scatter(x_coords, y_coords, c='blue', s=1, alpha=0.5)
