@@ -74,9 +74,9 @@ class Map:
         # Corner detection parameters
         self.angle_threshold: float    = GLOBALS.CORNER_DETECT_ANGLE_THRESHOLD        # [degrees]
         self.distance_threshold: float = GLOBALS.CORNER_DETECT_DISTANCE_THRESHOLD     # [m]
-        self.cluster_jump_dist: float  = GLOBALS.CORNER_DETECT_CLUSTER_JUMP_DISTANCE  # [m]
+
         self.use_clustering: bool      = GLOBALS.CORNER_DETECT_USE_CLUSTERING         # Enable clustering
-        self.smooth_window_size: int   = GLOBALS.CORNER_DETECT_SMOOTH_WINDOW_SIZE     # Smoothing window size
+        self.cluster_jump_dist: float  = GLOBALS.CORNER_DETECT_CLUSTER_JUMP_DISTANCE  # [m]
 
     def compute_points_position(self, robot_homo_matrix: np.ndarray, lidar_ranges: np.ndarray, lidar_angles: np.ndarray, scan_idx: int) -> None:
         scan_points_world_frame: list[Point] = []
@@ -109,10 +109,10 @@ class Map:
             self.compute_corners(scan_points_world_frame, scan_idx, use_clustering=self.use_clustering)
 
     def compute_corners(self, scan_points: list[Point], scan_idx: int, use_clustering: bool = True):
-        """Cluster -> Smooth -> Detect Angles"""
+        """Cluster -> Average -> Smooth -> Detect Angles"""
         
         # Prepare clusters
-        clusters: list[list[Point]]  = []
+        clusters: list[list[Point]] = []
         cluster_min_size: int = 5
 
         if use_clustering:
@@ -148,99 +148,86 @@ class Map:
             ## DEBUG
             # print(f"[Map](compute_corners) Processing entire scan as single cluster (use_clustering={use_clustering}).")
 
-        # Smoothing and Detection per cluster
+        # Compute cluster centroids
+        cluster_centroids: list[tuple[float, float]] = []
+        for cluster in clusters:
+            if len(cluster) >= cluster_min_size:
+                # Average x and y coordinates
+                avg_x = sum(p.x for p in cluster) / len(cluster)
+                avg_y = sum(p.y for p in cluster) / len(cluster)
+                cluster_centroids.append((avg_x, avg_y))
+
+        # If no centroids, return early
+        if len(cluster_centroids) < 3:
+            return
+
+        # Detect Angles with descriptor computation
         detected_corners: list = []
 
-        for cluster in clusters:
-            # Check minimum size
-            if len(cluster) < cluster_min_size: 
+        for i in range(1, len(cluster_centroids) - 1):
+            prev_x, prev_y = cluster_centroids[i-1]
+            curr_x, curr_y = cluster_centroids[i]
+            next_x, next_y = cluster_centroids[i+1]
+
+            # Vector 1: Prev -> Curr
+            v1_x = curr_x - prev_x
+            v1_y = curr_y - prev_y
+            
+            # Vector 2: Curr -> Next
+            v2_x = next_x - curr_x
+            v2_y = next_y - curr_y
+
+            # Magnitudes
+            mag_v1 = math.sqrt(v1_x**2 + v1_y**2)
+            mag_v2 = math.sqrt(v2_x**2 + v2_y**2)
+
+            if mag_v1 == 0 or mag_v2 == 0:
                 continue
 
-            # Manual Smoothing
-            smoothed_coords = []
+            # Dot product
+            dot_product = (v1_x * v2_x) + (v1_y * v2_y)
             
-            for i in range(len(cluster)):
-                # Skip extreme edges
-                half_window = self.smooth_window_size // 2
-                if i < half_window or i >= len(cluster) - half_window:
-                    smoothed_coords.append((cluster[i].x, cluster[i].y))
-                else:
-                    # Moving average with variable window size
-                    start_idx = i - half_window
-                    end_idx   = i + half_window + 1
-                    
-                    sum_x, sum_y = 0.0, 0.0
-                    for j in range(start_idx, end_idx):
-                        sum_x += cluster[j].x
-                        sum_y += cluster[j].y
-                    
-                    smoothed_coords.append((sum_x / self.smooth_window_size, sum_y / self.smooth_window_size))
+            # Cosine rule
+            cos_angle = max(-1.0, min(1.0, dot_product / (mag_v1 * mag_v2)))
+            angle_rad = math.acos(cos_angle)
+            angle_deg = math.degrees(angle_rad)
 
-            # Detect Angles with descriptor computation
-            for i in range(1, len(smoothed_coords) - 1):
-                prev_x, prev_y = smoothed_coords[i-1]
-                curr_x, curr_y = smoothed_coords[i]
-                next_x, next_y = smoothed_coords[i+1]
+            # Compute corner descriptors from smoothed centroid neighborhood
+            median_dist, variance = self._compute_centroid_neighborhood_descriptors(cluster_centroids, i)
 
-                # Vector 1: Prev -> Curr
-                v1_x = curr_x - prev_x
-                v1_y = curr_y - prev_y
-                
-                # Vector 2: Curr -> Next
-                v2_x = next_x - curr_x
-                v2_y = next_y - curr_y
+            # Compute confidence score
+            confidence = self._compute_corner_confidence(angle_deg, variance)
 
-                # Magnitudes
-                mag_v1 = math.sqrt(v1_x**2 + v1_y**2)
-                mag_v2 = math.sqrt(v2_x**2 + v2_y**2)
-
-                if mag_v1 == 0 or mag_v2 == 0:
-                    continue
-
-                # Dot product
-                dot_product = (v1_x * v2_x) + (v1_y * v2_y)
-                
-                # Cosine rule
-                cos_angle = max(-1.0, min(1.0, dot_product / (mag_v1 * mag_v2)))
-                angle_rad = math.acos(cos_angle)
-                angle_deg = math.degrees(angle_rad)
-
-                # Compute corner descriptors
-                median_dist, variance = self._compute_neighborhood_descriptors(cluster, i)
-
-                # Compute confidence score
-                confidence = self._compute_corner_confidence(angle_deg, variance)
-
-                # Check thresholds
-                if angle_deg > self.angle_threshold and confidence > 0.5:
-                    detected_corners.append({
-                        'x': curr_x,
-                        'y': curr_y,
-                        'angle': angle_deg,
-                        'median_dist': median_dist,
-                        'variance': variance,
-                        'confidence': confidence
-                    })
+            # Check thresholds
+            if angle_deg > self.angle_threshold and confidence > GLOBALS.CORNER_DETECT_CONFIDENCE_THRESHOLD:
+                detected_corners.append({
+                    'x': curr_x,
+                    'y': curr_y,
+                    'angle': angle_deg,
+                    'median_dist': median_dist,
+                    'variance': variance,
+                    'confidence': confidence
+                })
 
         # Update Landmarks
         for corner in detected_corners:
             self._associate_and_update(corner, scan_idx)
 
-    def _compute_neighborhood_descriptors(self, cluster: list[Point], center_idx: int) -> tuple[float, float]:
-        """Compute median distance and variance of neighborhood around a point"""
+    def _compute_centroid_neighborhood_descriptors(self, centroids: list[tuple[float, float]], center_idx: int) -> tuple[float, float]:
+        """Compute median distance and variance of neighborhood around a centroid point"""
         
-        # Neighborhood radius
+        # Neighborhood radius (±2 centroids)
         start = max(0, center_idx - 2)
-        end   = min(len(cluster), center_idx + 3)
+        end   = min(len(centroids), center_idx + 3)
         
-        # Compute distances from center point
-        center_x = cluster[center_idx].x
-        center_y = cluster[center_idx].y
+        # Compute distances from center centroid
+        center_x, center_y = centroids[center_idx]
         
         distances = []
         for j in range(start, end):
             if j != center_idx:
-                d = math.sqrt((cluster[j].x - center_x)**2 + (cluster[j].y - center_y)**2)
+                cx, cy = centroids[j]
+                d = math.sqrt((cx - center_x)**2 + (cy - center_y)**2)
                 distances.append(d)
         
         if not distances:
@@ -279,13 +266,28 @@ class Map:
         """Associate detected corner with existing landmark or create new one"""
 
         best_landmark = None
-        min_dist      = self.distance_threshold
+        best_score    = float('inf')
 
-        # Find nearest landmark
+        # Find landmark with best match
         for landmark in self.landmarks:
-            d = math.sqrt((landmark.x - corner['x'])**2 + (landmark.y - corner['y'])**2)
-            if d < min_dist:
-                min_dist = d
+            # Spatial distance component
+            spatial_dist = math.sqrt((landmark.x - corner['x'])**2 + (landmark.y - corner['y'])**2)
+            
+            # Only consider landmarks within distance threshold
+            if spatial_dist > self.distance_threshold:
+                continue
+            
+            # Angle difference component
+            angle_diff = abs(landmark.angle - corner['angle'])
+            
+            # Combined score: 50% spatial distance, 50% angle similarity
+            spatial_norm = spatial_dist / self.distance_threshold  # Normalize to [0,1]
+            angle_norm   = min(1.0, angle_diff / 90.0)             # Normalize to [0,1]
+            
+            combined_score = 0.5 * spatial_norm + 0.5 * angle_norm
+            
+            if combined_score < best_score:
+                best_score = combined_score
                 best_landmark = landmark
         
         if best_landmark:
@@ -313,7 +315,7 @@ class Map:
     def plot_snapshots(self, steps: int = 10):
         """Save each scan as a snapshot showing accumulated map points."""
 
-        print(f"[Map](plot_snapshots) Saving {len(self.points_world_frame)} snapshots...")
+        print(f"[Map](plot_snapshots) Saving {len(self.points_world_frame)/steps} snapshots...")
 
         for scan_idx in range(0, len(self.points_world_frame), steps):
             plt.figure(figsize=(10, 8))
