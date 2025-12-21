@@ -109,7 +109,7 @@ class Map:
             self.compute_corners(scan_points_world_frame, scan_idx, use_clustering=self.use_clustering)
 
     def compute_corners(self, scan_points: list[Point], scan_idx: int, use_clustering: bool = True):
-        """Cluster -> Average -> Smooth -> Detect Angles"""
+        """Cluster -> Fit lines -> Find intersections -> Detect corners"""
         
         # Prepare clusters
         clusters: list[list[Point]] = []
@@ -137,81 +137,201 @@ class Map:
             # Append the last cluster
             if len(current_cluster) >= cluster_min_size:
                 clusters.append(current_cluster)
-
-            ## DEBUG
-            # print(f"[Map](compute_corners) Detected {len(clusters)} clusters (use_clustering={use_clustering}).")
+                
         else:
             # Process entire scan as single cluster
             if len(scan_points) >= cluster_min_size:
                 clusters = [scan_points]
-            
-            ## DEBUG
-            # print(f"[Map](compute_corners) Processing entire scan as single cluster (use_clustering={use_clustering}).")
 
-        # Compute cluster centroids
-        cluster_centroids: list[tuple[float, float]] = []
+        # Fit lines to clusters and keep track of both
+        fitted_lines_with_clusters: list[dict] = []  # Each: {line: {a,b,c}, cluster: [Point]}
+        
         for cluster in clusters:
             if len(cluster) >= cluster_min_size:
-                # Average x and y coordinates
-                avg_x = sum(p.x for p in cluster) / len(cluster)
-                avg_y = sum(p.y for p in cluster) / len(cluster)
-                cluster_centroids.append((avg_x, avg_y))
+                line_params = self._fit_line_to_cluster(cluster)
+                if line_params is not None:
+                    fitted_lines_with_clusters.append({
+                        'line': line_params,
+                        'cluster': cluster
+                    })
 
-        # If no centroids, return early
-        if len(cluster_centroids) < 3:
-            return
-
-        # Detect Angles with descriptor computation
+        # Find intersections between consecutive lines
         detected_corners: list = []
-
-        for i in range(1, len(cluster_centroids) - 1):
-            prev_x, prev_y = cluster_centroids[i-1]
-            curr_x, curr_y = cluster_centroids[i]
-            next_x, next_y = cluster_centroids[i+1]
-
-            # Vector 1: Prev -> Curr
-            v1_x = curr_x - prev_x
-            v1_y = curr_y - prev_y
+        
+        for i in range(len(fitted_lines_with_clusters) - 1):
+            line1_data = fitted_lines_with_clusters[i]
+            line2_data = fitted_lines_with_clusters[i + 1]
             
-            # Vector 2: Curr -> Next
-            v2_x = next_x - curr_x
-            v2_y = next_y - curr_y
-
-            # Magnitudes
-            mag_v1 = math.sqrt(v1_x**2 + v1_y**2)
-            mag_v2 = math.sqrt(v2_x**2 + v2_y**2)
-
-            if mag_v1 == 0 or mag_v2 == 0:
-                continue
-
-            # Dot product
-            dot_product = (v1_x * v2_x) + (v1_y * v2_y)
+            line1 = line1_data['line']
+            line2 = line2_data['line']
+            cluster1 = line1_data['cluster']
+            cluster2 = line2_data['cluster']
             
-            # Cosine rule
-            cos_angle = max(-1.0, min(1.0, dot_product / (mag_v1 * mag_v2)))
-            angle_rad = math.acos(cos_angle)
-            angle_deg = math.degrees(angle_rad)
-
-            # Compute corner descriptors from smoothed centroid neighborhood
-            median_dist, variance = self._compute_centroid_neighborhood_descriptors(cluster_centroids, i)
-
-            # Compute confidence score
-            confidence = self._compute_corner_confidence(angle_deg, variance)
-
-            # Check thresholds
-            if angle_deg > self.angle_threshold and confidence > GLOBALS.CORNER_DETECT_CONFIDENCE_THRESHOLD:
-                detected_corners.append({
-                    'x': curr_x,
-                    'y': curr_y,
-                    'angle': angle_deg,
-                    'median_dist': median_dist,
-                    'variance': variance,
-                    'confidence': confidence
-                })
+            # Compute intersection
+            intersection = self._compute_line_intersection(line1, line2)
+            
+            if intersection is not None:
+                x, y = intersection
+                
+                # Compute angle at intersection
+                angle_deg = self._compute_intersection_angle(line1, line2)
+                
+                # Compute descriptor metrics from cluster points
+                median_dist, variance = self._compute_intersection_descriptors(
+                    cluster1, cluster2, x, y
+                )
+                
+                # Compute confidence score
+                confidence = self._compute_corner_confidence(angle_deg, variance)
+                
+                # Check thresholds
+                if angle_deg > self.angle_threshold and confidence > GLOBALS.CORNER_DETECT_CONFIDENCE_THRESHOLD:
+                    detected_corners.append({
+                        'x': x,
+                        'y': y,
+                        'angle': angle_deg,
+                        'median_dist': median_dist,
+                        'variance': variance,
+                        'confidence': confidence
+                    })
 
         # Update Landmarks
         for corner in detected_corners:
             self._associate_and_update(corner, scan_idx)
+
+    def _fit_line_to_cluster(self, cluster: list[Point]) -> dict | None:
+        """Fit a line to a cluster using least squares regression"""
+        
+        if len(cluster) < 2:
+            return None
+        
+        # Extract coordinates
+        x_vals = [p.x for p in cluster]
+        y_vals = [p.y for p in cluster]
+        
+        # Compute means
+        x_mean = sum(x_vals) / len(x_vals)
+        y_mean = sum(y_vals) / len(y_vals)
+        
+        # Compute covariance terms
+        cov_xx = sum((x - x_mean)**2 for x in x_vals) / len(x_vals)
+        cov_yy = sum((y - y_mean)**2 for y in y_vals) / len(y_vals)
+        cov_xy = sum((x_vals[i] - x_mean) * (y_vals[i] - y_mean) for i in range(len(x_vals))) / len(x_vals)
+        
+        # Compute eigenvalues and eigenvectors using characteristic equation
+        # For 2x2 matrix, we use the formula for eigenvector of smaller eigenvalue
+        trace = cov_xx + cov_yy
+        det = cov_xx * cov_yy - cov_xy * cov_xy
+        
+        if det < 0:
+            return None
+        
+        lambda2 = (trace - math.sqrt(trace**2 - 4*det)) / 2  # Smaller eigenvalue
+        
+        # Eigenvector corresponding to smaller eigenvalue (normal to line)
+        if abs(cov_xy) > 1e-10:
+            normal_x = cov_xy
+            normal_y = lambda2 - cov_xx
+        else:
+            if cov_xx < cov_yy:
+                normal_x = 1.0
+                normal_y = 0.0
+            else:
+                normal_x = 0.0
+                normal_y = 1.0
+        
+        # Normalize
+        normal_len = math.sqrt(normal_x**2 + normal_y**2)
+        if normal_len < 1e-10:
+            return None
+        
+        a = normal_x / normal_len
+        b = normal_y / normal_len
+        c = -(a * x_mean + b * y_mean)
+        
+        return {'a': a, 'b': b, 'c': c}
+
+    def _compute_line_intersection(self, line1: dict, line2: dict) -> tuple[float, float] | None:
+        """Compute intersection point of two lines"""
+
+        a1, b1, c1 = line1['a'], line1['b'], line1['c']
+        a2, b2, c2 = line2['a'], line2['b'], line2['c']
+        
+        # Solve system: a1*x + b1*y + c1 = 0
+        #               a2*x + b2*y + c2 = 0
+        det = a1 * b2 - a2 * b1
+        
+        if abs(det) < 1e-10:
+            return None  # Lines are parallel
+        
+        x = (b1 * c2 - b2 * c1) / det
+        y = (a2 * c1 - a1 * c2) / det
+        
+        return (x, y)
+
+    def _compute_intersection_angle(self, line1: dict, line2: dict) -> float:
+        """Compute angle between two intersecting lines in degrees"""
+
+        a1, b1 = line1['a'], line1['b']
+        a2, b2 = line2['a'], line2['b']
+        
+        # Direction vectors
+        dir1_x, dir1_y = -b1, a1
+        dir2_x, dir2_y = -b2, a2
+        
+        # Normalize
+        len1 = math.sqrt(dir1_x**2 + dir1_y**2)
+        len2 = math.sqrt(dir2_x**2 + dir2_y**2)
+        
+        if len1 < 1e-10 or len2 < 1e-10:
+            return 0.0
+        
+        dir1_x /= len1
+        dir1_y /= len1
+        dir2_x /= len2
+        dir2_y /= len2
+        
+        # Compute angle using dot product
+        dot_product = dir1_x * dir2_x + dir1_y * dir2_y
+        dot_product = max(-1.0, min(1.0, dot_product))
+        
+        angle_rad = math.acos(dot_product)
+        angle_deg = math.degrees(angle_rad)
+        
+        # Return acute angle (0-90 degrees)
+        if angle_deg > 90:
+            angle_deg = 180 - angle_deg
+        
+        return angle_deg
+
+    def _compute_intersection_descriptors(self, cluster1: list[Point], cluster2: list[Point], 
+                                          corner_x: float, corner_y: float) -> tuple[float, float]:
+        """Compute median distance and variance from cluster points to the intersection point"""
+
+        # Combine points from both clusters
+        all_points = cluster1 + cluster2
+        
+        if not all_points:
+            return 0.0, 0.0
+        
+        # Compute distances from all points to intersection
+        distances = []
+        for point in all_points:
+            d = math.sqrt((point.x - corner_x)**2 + (point.y - corner_y)**2)
+            distances.append(d)
+        
+        if not distances:
+            return 0.0, 0.0
+        
+        # Median
+        distances_sorted = sorted(distances)
+        median = distances_sorted[len(distances_sorted) // 2]
+        
+        # Variance
+        mean = sum(distances) / len(distances)
+        variance = sum((d - mean)**2 for d in distances) / len(distances)
+        
+        return median, variance
 
     def _compute_centroid_neighborhood_descriptors(self, centroids: list[tuple[float, float]], center_idx: int) -> tuple[float, float]:
         """Compute median distance and variance of neighborhood around a centroid point"""
@@ -315,7 +435,7 @@ class Map:
     def plot_snapshots(self, steps: int = 10):
         """Save each scan as a snapshot showing accumulated map points."""
 
-        print(f"[Map](plot_snapshots) Saving {len(self.points_world_frame)/steps} snapshots...")
+        print(f"[Map](plot_snapshots) Saving {int(len(self.points_world_frame)/steps)} snapshots...")
 
         for scan_idx in range(0, len(self.points_world_frame), steps):
             plt.figure(figsize=(10, 8))
