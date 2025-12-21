@@ -77,6 +77,7 @@ class Map:
 
         self.use_clustering: bool      = GLOBALS.CORNER_DETECT_USE_CLUSTERING         # Enable clustering
         self.cluster_jump_dist: float  = GLOBALS.CORNER_DETECT_CLUSTER_JUMP_DISTANCE  # [m]
+        self.cluster_line_error: float = GLOBALS.CORNER_DETECT_CLUSTER_LINE_ERROR     # [m^2]
 
     def compute_points_position(self, robot_homo_matrix: np.ndarray, lidar_ranges: np.ndarray, lidar_angles: np.ndarray, scan_idx: int) -> None:
         scan_points_world_frame: list[Point] = []
@@ -116,24 +117,44 @@ class Map:
         cluster_min_size: int = 5
 
         if use_clustering:
-            # Clustering (Split by distance jumps)
+            # Clustering by line fitting error
             current_cluster = [scan_points[0]]
 
             for i in range(1, len(scan_points)):
                 p_prev = scan_points[i-1]
                 p_curr = scan_points[i]
 
-                # Calculate distance between consecutive points
-                dist = math.sqrt((p_curr.x - p_prev.x)**2 + (p_curr.y - p_prev.y)**2)
+                # Check for obvious distance jumps first
+                jump_dist = math.sqrt((p_curr.x - p_prev.x)**2 + (p_curr.y - p_prev.y)**2)
 
-                if dist > self.cluster_jump_dist:
-                    # Start new cluster
+                if jump_dist > self.cluster_jump_dist:
+                    # Obvious gap - start new cluster
                     if len(current_cluster) >= cluster_min_size:
                         clusters.append(current_cluster)
                     current_cluster = [p_curr]
+                    continue
+
+                # Try adding the new point and check line fit error
+                test_cluster = current_cluster + [p_curr]
+
+                if len(test_cluster) >= 3:
+                    line_params = self._fit_line_to_cluster(test_cluster)
+
+                    if line_params is not None:
+                        error = self._compute_line_mse(test_cluster, line_params)
+
+                        if error > self.cluster_line_error:
+                            # Error too high - this point belongs to a different wall
+                            if len(current_cluster) >= cluster_min_size:
+                                clusters.append(current_cluster)
+                            current_cluster = [p_curr]
+                        else:
+                            current_cluster.append(p_curr)
+                    else:
+                        current_cluster.append(p_curr)
                 else:
                     current_cluster.append(p_curr)
-            
+
             # Append the last cluster
             if len(current_cluster) >= cluster_min_size:
                 clusters.append(current_cluster)
@@ -250,6 +271,19 @@ class Map:
         c = -(a * x_mean + b * y_mean)
         
         return {'a': a, 'b': b, 'c': c}
+
+    def _compute_line_mse(self, cluster: list[Point], line_params: dict) -> float:
+        """Compute mean squared distance of points to the fitted line"""
+
+        a, b, c = line_params['a'], line_params['b'], line_params['c']
+        total_error = 0.0
+
+        for p in cluster:
+            # Distance from point to line (a,b already normalized so a²+b²=1)
+            dist = abs(a * p.x + b * p.y + c)
+            total_error += dist ** 2
+
+        return total_error / len(cluster)
 
     def _compute_line_intersection(self, line1: dict, line2: dict) -> tuple[float, float] | None:
         """Compute intersection point of two lines"""
