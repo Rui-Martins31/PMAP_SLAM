@@ -43,7 +43,7 @@ EKF_SIGMA_RANGE: float   = 0.08      # [m]
 EKF_SIGMA_BEARING: float = 0.04      # [rad]
 
 # Data association
-EKF_MAHALANOBIS_THRESHOLD: float = 4.0  # (was 2.5)
+EKF_MAHALANOBIS_THRESHOLD: float = 4.0  #2.5
 
 # Initial covariance
 EKF_INITIAL_P: float = 0.01

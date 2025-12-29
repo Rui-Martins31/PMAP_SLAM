@@ -102,6 +102,11 @@ def main():
     ekf.plot_trajectory()
     ekf.plot_landmarks()
     ekf.plot_map()
+
+    # Generate animation (every 3rd frame for speed)
+    print("Generating animation...")
+    ekf.generate_animation(step=3, fps=15)
+
     print(f"Visualizations saved to {GLOBALS.PATH_SLAM}")
 
 

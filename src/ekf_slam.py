@@ -452,3 +452,129 @@ class EKFSlam:
         else:
             plt.savefig(f"{PATH_SLAM}/ekf_map.png", dpi=150, bbox_inches='tight')
         plt.close()
+
+    def generate_animation(self, output_path: str = None, step: int = 5, fps: int = 20):
+        """
+        Generate an animation showing the robot's journey through the map.
+
+        Args:
+            output_path: Path to save the animation (default: output/slam/ekf_animation.mp4)
+            step: Only render every Nth frame to speed up generation
+            fps: Frames per second in output video
+        """
+        from matplotlib.animation import FuncAnimation, FFMpegWriter
+        import os
+
+        if output_path is None:
+            output_path = f"{PATH_SLAM}/ekf_animation.mp4"
+
+        # Ensure output directory exists
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        n_frames = len(self.scan_points_history)
+        frame_indices = list(range(0, n_frames, step))
+
+        print(f"Generating animation with {len(frame_indices)} frames...")
+
+        # Compute bounds from all data
+        all_x = [x for scan in self.scan_points_history for x, y in scan]
+        all_y = [y for scan in self.scan_points_history for x, y in scan]
+        all_x.extend(self.history_x)
+        all_y.extend(self.history_y)
+
+        x_min, x_max = min(all_x) - 1, max(all_x) + 1
+        y_min, y_max = min(all_y) - 1, max(all_y) + 1
+
+        # Create figure
+        fig, ax = plt.subplots(figsize=(12, 10))
+
+        # Initialize plot elements
+        scan_scatter = ax.scatter([], [], c='blue', s=1, alpha=0.3, label='Wall Points')
+        traj_line, = ax.plot([], [], 'g-', linewidth=2, alpha=0.8, label='Trajectory')
+        robot_dot, = ax.plot([], [], 'go', markersize=15, label='Robot')
+        landmark_scatter = ax.scatter([], [], c='red', s=100, marker='^', label='Landmarks')
+        start_dot, = ax.plot([0], [0], 'ko', markersize=10, label='Start')
+
+        # Info text
+        info_text = ax.text(0.02, 0.98, '', transform=ax.transAxes,
+                           fontsize=10, verticalalignment='top',
+                           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+        ax.set_xlabel('X [m]')
+        ax.set_ylabel('Y [m]')
+        ax.legend(loc='upper right')
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect('equal')
+
+        def init():
+            scan_scatter.set_offsets(np.empty((0, 2)))
+            traj_line.set_data([], [])
+            robot_dot.set_data([], [])
+            landmark_scatter.set_offsets(np.empty((0, 2)))
+            info_text.set_text('')
+            return scan_scatter, traj_line, robot_dot, landmark_scatter, info_text
+
+        def update(frame_num):
+            idx = frame_indices[frame_num]
+
+            # Accumulated scan points up to this frame
+            acc_x = []
+            acc_y = []
+            for i in range(idx + 1):
+                for px, py in self.scan_points_history[i]:
+                    acc_x.append(px)
+                    acc_y.append(py)
+
+            if acc_x:
+                scan_scatter.set_offsets(np.column_stack([acc_x, acc_y]))
+
+            # Trajectory up to this frame
+            traj_line.set_data(self.history_x[:idx+2], self.history_y[:idx+2])
+
+            # Current robot position
+            robot_dot.set_data([self.history_x[idx+1]], [self.history_y[idx+1]])
+
+            # Landmarks (we need to track when each was discovered)
+            # For now, show all landmarks that exist by end
+            landmarks = self.get_landmarks()
+            if landmarks:
+                lm_x = [lm['x'] for lm in landmarks]
+                lm_y = [lm['y'] for lm in landmarks]
+                landmark_scatter.set_offsets(np.column_stack([lm_x, lm_y]))
+
+            # Count observations at this frame (approximate)
+            n_obs = len([s for s in self.scan_points_history[:idx+1]])
+
+            # Info text
+            robot_x = self.history_x[idx+1]
+            robot_y = self.history_y[idx+1]
+            robot_theta = self.history_theta[idx+1]
+            info_text.set_text(
+                f'Scan: {idx+1}/{n_frames}\n'
+                f'Robot: ({robot_x:.2f}, {robot_y:.2f})\n'
+                f'Heading: {np.degrees(robot_theta):.1f}°\n'
+                f'Landmarks: {len(landmarks)}'
+            )
+
+            ax.set_title(f'EKF SLAM Animation - Scan {idx+1}/{n_frames}')
+
+            return scan_scatter, traj_line, robot_dot, landmark_scatter, info_text
+
+        anim = FuncAnimation(fig, update, init_func=init,
+                            frames=len(frame_indices), interval=50, blit=True)
+
+        # Save animation
+        try:
+            writer = FFMpegWriter(fps=fps, bitrate=1800)
+            anim.save(output_path, writer=writer)
+            print(f"Animation saved to: {output_path}")
+        except Exception as e:
+            # Fallback to gif if ffmpeg not available
+            gif_path = output_path.replace('.mp4', '.gif')
+            print(f"FFmpeg not available, saving as GIF: {gif_path}")
+            anim.save(gif_path, writer='pillow', fps=fps)
+            print(f"Animation saved to: {gif_path}")
+
+        plt.close()
