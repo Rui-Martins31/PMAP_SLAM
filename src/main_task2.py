@@ -68,7 +68,7 @@ def main():
         ekf.store_scan_points(scan_points)
 
         # Detect corners and convert to observations
-        observations = corner_detector.detect_corners_as_observations(
+        observations = corner_detector.compute_corners_as_observations(
             scan_points, robot_pose
         )
 

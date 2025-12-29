@@ -1,12 +1,3 @@
-"""
-EKF SLAM Implementation
-
-Adapted from: https://github.com/AtsushiSakai/PythonRobotics/blob/master/SLAM/EKFSLAM/ekf_slam.py
-
-This module implements Extended Kalman Filter SLAM for robot localization
-and landmark mapping using corner features detected from LIDAR scans.
-"""
-
 import math
 import numpy as np
 import matplotlib.pyplot as plt

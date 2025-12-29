@@ -111,7 +111,57 @@ class Map:
 
     def compute_corners(self, scan_points: list[Point], scan_idx: int, use_clustering: bool = True):
         """Cluster -> Fit lines -> Find intersections -> Detect corners"""
+
+        # Corner detection logic
+        detected_corners = self._detect_corners(scan_points, use_clustering)
+
+        # Update Landmarks
+        for corner in detected_corners:
+            self._associate_and_update(corner, scan_idx)
+
+    def compute_corners_as_observations(self, scan_points: list[Point], robot_pose: tuple) -> list:
+        """Detect corners and return them as robot-frame observations"""
+
+        # Corner detection logic
+        detected_corners = self._detect_corners(scan_points, self.use_clustering)
+
+        # Convert to robot-frame observations
+        observations = []
+        rx, ry, rtheta = robot_pose
+
+        for corner in detected_corners:
+            dx = corner['x'] - rx
+            dy = corner['y'] - ry
+
+            # Distance from robot to corner
+            distance = math.sqrt(dx**2 + dy**2)
+
+            # Bearing angle (relative to robot forward axis)
+            world_angle = math.atan2(dy, dx)
+            bearing = world_angle - rtheta
+
+            # Normalize bearing to [-pi, pi]
+            bearing = (bearing + math.pi) % (2 * math.pi) - math.pi
+
+            observations.append((
+                distance,
+                bearing,
+                {
+                    'angle': corner['angle'],
+                    'median_dist': corner['median_dist'],
+                    'variance': corner['variance'],
+                    'confidence': corner['confidence']
+                }
+            ))
+
+        return observations
+
+    def _detect_corners(self, scan_points: list[Point], use_clustering: bool = True) -> list[dict]:
+        """Cluster -> Fit lines -> Find intersections"""
         
+        if len(scan_points) == 0:
+            return []
+
         # Prepare clusters
         clusters: list[list[Point]] = []
         cluster_min_size: int = 5
@@ -158,7 +208,7 @@ class Map:
             # Append the last cluster
             if len(current_cluster) >= cluster_min_size:
                 clusters.append(current_cluster)
-                
+
         else:
             # Process entire scan as single cluster
             if len(scan_points) >= cluster_min_size:
@@ -166,7 +216,7 @@ class Map:
 
         # Fit lines to clusters and keep track of both
         fitted_lines_with_clusters: list[dict] = []  # Each: {line: {a,b,c}, cluster: [Point]}
-        
+
         for cluster in clusters:
             if len(cluster) >= cluster_min_size:
                 line_params = self._fit_line_to_cluster(cluster)
@@ -178,33 +228,33 @@ class Map:
 
         # Find intersections between consecutive lines
         detected_corners: list = []
-        
+
         for i in range(len(fitted_lines_with_clusters) - 1):
             line1_data = fitted_lines_with_clusters[i]
             line2_data = fitted_lines_with_clusters[i + 1]
-            
+
             line1 = line1_data['line']
             line2 = line2_data['line']
             cluster1 = line1_data['cluster']
             cluster2 = line2_data['cluster']
-            
+
             # Compute intersection
             intersection = self._compute_line_intersection(line1, line2)
-            
+
             if intersection is not None:
                 x, y = intersection
-                
+
                 # Compute angle at intersection
                 angle_deg = self._compute_intersection_angle(line1, line2)
-                
+
                 # Compute descriptor metrics from cluster points
                 median_dist, variance = self._compute_intersection_descriptors(
                     cluster1, cluster2, x, y
                 )
-                
+
                 # Compute confidence score
                 confidence = self._compute_corner_confidence(angle_deg, variance)
-                
+
                 # Check thresholds
                 if angle_deg > self.angle_threshold and confidence > GLOBALS.CORNER_DETECT_CONFIDENCE_THRESHOLD:
                     detected_corners.append({
@@ -216,9 +266,7 @@ class Map:
                         'confidence': confidence
                     })
 
-        # Update Landmarks
-        for corner in detected_corners:
-            self._associate_and_update(corner, scan_idx)
+        return detected_corners
 
     def _fit_line_to_cluster(self, cluster: list[Point]) -> dict | None:
         """Fit a line to a cluster using least squares regression"""
@@ -415,143 +463,6 @@ class Map:
         confidence = 0.6 * angle_norm + 0.4 * variance_norm
         
         return max(0.0, min(1.0, confidence))
-
-    def detect_corners_as_observations(self, scan_points: list[Point], robot_pose: tuple) -> list:
-        """
-        Detect corners and return them as robot-frame observations for EKF SLAM.
-
-        This method runs the corner detection pipeline but instead of updating
-        internal landmarks, it returns observations in the format needed by
-        the EKF update step.
-
-        Args:
-            scan_points: List of Point objects in world frame
-            robot_pose: Tuple (x, y, theta) of robot position
-
-        Returns:
-            List of (distance, bearing, descriptor) tuples where:
-            - distance: Distance from robot to corner in meters
-            - bearing: Angle from robot forward axis in radians
-            - descriptor: Dict with corner angle, median_dist, variance, confidence
-        """
-        # Run corner detection pipeline (same as compute_corners but without updating landmarks)
-        clusters: list[list[Point]] = []
-        cluster_min_size: int = 5
-
-        if self.use_clustering and len(scan_points) > 0:
-            current_cluster = [scan_points[0]]
-
-            for i in range(1, len(scan_points)):
-                p_prev = scan_points[i-1]
-                p_curr = scan_points[i]
-
-                jump_dist = math.sqrt((p_curr.x - p_prev.x)**2 + (p_curr.y - p_prev.y)**2)
-
-                if jump_dist > self.cluster_jump_dist:
-                    if len(current_cluster) >= cluster_min_size:
-                        clusters.append(current_cluster)
-                    current_cluster = [p_curr]
-                    continue
-
-                test_cluster = current_cluster + [p_curr]
-
-                if len(test_cluster) >= 3:
-                    line_params = self._fit_line_to_cluster(test_cluster)
-
-                    if line_params is not None:
-                        error = self._compute_line_mse(test_cluster, line_params)
-
-                        if error > self.cluster_line_error:
-                            if len(current_cluster) >= cluster_min_size:
-                                clusters.append(current_cluster)
-                            current_cluster = [p_curr]
-                        else:
-                            current_cluster.append(p_curr)
-                    else:
-                        current_cluster.append(p_curr)
-                else:
-                    current_cluster.append(p_curr)
-
-            if len(current_cluster) >= cluster_min_size:
-                clusters.append(current_cluster)
-        else:
-            if len(scan_points) >= cluster_min_size:
-                clusters = [scan_points]
-
-        # Fit lines to clusters
-        fitted_lines_with_clusters: list[dict] = []
-
-        for cluster in clusters:
-            if len(cluster) >= cluster_min_size:
-                line_params = self._fit_line_to_cluster(cluster)
-                if line_params is not None:
-                    fitted_lines_with_clusters.append({
-                        'line': line_params,
-                        'cluster': cluster
-                    })
-
-        # Find intersections between consecutive lines
-        detected_corners: list[dict] = []
-
-        for i in range(len(fitted_lines_with_clusters) - 1):
-            line1_data = fitted_lines_with_clusters[i]
-            line2_data = fitted_lines_with_clusters[i + 1]
-
-            line1 = line1_data['line']
-            line2 = line2_data['line']
-            cluster1 = line1_data['cluster']
-            cluster2 = line2_data['cluster']
-
-            intersection = self._compute_line_intersection(line1, line2)
-
-            if intersection is not None:
-                x, y = intersection
-                angle_deg = self._compute_intersection_angle(line1, line2)
-                median_dist, variance = self._compute_intersection_descriptors(
-                    cluster1, cluster2, x, y
-                )
-                confidence = self._compute_corner_confidence(angle_deg, variance)
-
-                if angle_deg > self.angle_threshold and confidence > GLOBALS.CORNER_DETECT_CONFIDENCE_THRESHOLD:
-                    detected_corners.append({
-                        'x': x,
-                        'y': y,
-                        'angle': angle_deg,
-                        'median_dist': median_dist,
-                        'variance': variance,
-                        'confidence': confidence
-                    })
-
-        # Convert to robot-frame observations
-        observations = []
-        rx, ry, rtheta = robot_pose
-
-        for corner in detected_corners:
-            dx = corner['x'] - rx
-            dy = corner['y'] - ry
-
-            # Distance from robot to corner
-            distance = math.sqrt(dx**2 + dy**2)
-
-            # Bearing angle (relative to robot forward axis)
-            world_angle = math.atan2(dy, dx)
-            bearing = world_angle - rtheta
-
-            # Normalize bearing to [-pi, pi]
-            bearing = (bearing + math.pi) % (2 * math.pi) - math.pi
-
-            observations.append((
-                distance,
-                bearing,
-                {
-                    'angle': corner['angle'],
-                    'median_dist': corner['median_dist'],
-                    'variance': corner['variance'],
-                    'confidence': corner['confidence']
-                }
-            ))
-
-        return observations
 
     def _associate_and_update(self, corner: dict, scan_idx: int):
         """Associate detected corner with existing landmark or create new one"""
