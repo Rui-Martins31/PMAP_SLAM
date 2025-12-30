@@ -49,9 +49,9 @@ EKF_MAHALANOBIS_THRESHOLD: float = 4.0  #2.5
 EKF_INITIAL_P: float = 0.01
 
 # Graph SLAM Parameters
-GRAPH_SLAM_ODOM_NOISE_XY: float    = 0.15       # [m]
-GRAPH_SLAM_ODOM_NOISE_THETA: float = 0.08      # [rad] (~2 degrees)
-GRAPH_SLAM_OBS_NOISE_DIST: float   = 0.5         # [m]
-GRAPH_SLAM_OBS_NOISE_ANGLE: float  = 0.04      # [rad] (~5 degrees)
+GRAPH_SLAM_ODOM_NOISE_XY: float    = 0.5       # [m] 0.5
+GRAPH_SLAM_ODOM_NOISE_THETA: float = 0.08      # [rad] 0.08 
+GRAPH_SLAM_OBS_NOISE_DIST: float   = 0.7         # [m] 0.7
+GRAPH_SLAM_OBS_NOISE_ANGLE: float  = 0.08      # [rad] 0.08
 GRAPH_SLAM_MAX_ITERATIONS: int     = 1
-GRAPH_SLAM_CORNER_THRESHOLD: float = 1.5        # [m] data association threshold
+GRAPH_SLAM_CORNER_THRESHOLD: float = 1.5        # [m] 1.5

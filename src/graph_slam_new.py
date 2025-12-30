@@ -118,8 +118,8 @@ class GraphSlam:
                 corner_obs[corner_id].append((pose_idx, dist, angle))
 
         # Build edge arrays - only keep edges between temporally distant poses
-        MIN_POSE_GAP = 30
-        MAX_EDGES_PER_CORNER = 50  # Limit combinatorial explosion
+        MIN_POSE_GAP = 1
+        MAX_EDGES_PER_CORNER = 50
         loop_edges = []
         for corner_id, obs_list in corner_obs.items():
             if len(obs_list) < 2:
