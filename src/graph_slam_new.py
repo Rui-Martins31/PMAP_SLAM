@@ -225,10 +225,10 @@ class GraphSlam:
         print(f"  Max nfev: {n_poses * GLOBALS.GRAPH_SLAM_MAX_ITERATIONS}")
         result = least_squares(residuals, x0, method='trf',
                                loss='soft_l1',
-                               f_scale=1.0,
+                               f_scale=1.2,
                                max_nfev=GLOBALS.GRAPH_SLAM_MAX_ITERATIONS * n_poses,
-                               ftol=1e-6,
-                               xtol=1e-6,
+                            #    ftol=1e-6,
+                            #    xtol=1e-6,
                                verbose=2)
 
         print(f"  Converged: {result.success}, Iterations: {result.nfev}")
