@@ -227,8 +227,8 @@ class GraphSlam:
                                loss='soft_l1',
                                f_scale=1.2,
                                max_nfev=GLOBALS.GRAPH_SLAM_MAX_ITERATIONS * n_poses,
-                            #    ftol=1e-6,
-                            #    xtol=1e-6,
+                               ftol=1e-6,
+                               xtol=1e-6,
                                verbose=2)
 
         print(f"  Converged: {result.success}, Iterations: {result.nfev}")
@@ -334,3 +334,45 @@ class GraphSlam:
             opt_end = self.optimized_poses[:2, -1]
             drift = np.sqrt((odom_end[0] - opt_end[0])**2 + (odom_end[1] - opt_end[1])**2)
             print(f"Drift correction: {drift:.3f} m")
+
+    @classmethod
+    def from_ekf(cls, ekf_slam, odometry_data: list, observations_by_pose: dict):
+        """Initialize Graph SLAM from EKF SLAM results"""
+
+        graph = cls(corner_threshold=0.5)
+
+        # Initialize poses from EKF trajectory
+        n_poses = len(ekf_slam.history_x)
+        for i in range(n_poses):
+            pose = np.array([
+                ekf_slam.history_x[i],
+                ekf_slam.history_y[i],
+                ekf_slam.history_theta[i]
+            ])
+            graph.nodes_robot_pos.append(pose)
+            graph.odom_path.append(pose[:2].copy())
+
+        # Store odometry constraints
+        graph.odometry_constraints = list(odometry_data)
+
+        # Initialize corner positions from EKF landmarks
+        landmarks = ekf_slam.get_landmarks()
+        for lm in landmarks:
+            graph.corner_positions[lm['id']] = [lm['x'], lm['y']]
+        graph.corner_id_counter = len(landmarks)
+
+        # Store observations with EKF's associations
+        graph.observations = {}
+        for pose_idx, obs_list in observations_by_pose.items():
+            if obs_list:
+                graph.observations[pose_idx] = obs_list
+
+        # Set odometry pose to final EKF pose
+        if n_poses > 0:
+            graph.odom_pose = np.array([
+                ekf_slam.history_x[-1],
+                ekf_slam.history_y[-1],
+                ekf_slam.history_theta[-1]
+            ])
+
+        return graph
