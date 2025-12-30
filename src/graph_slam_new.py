@@ -119,16 +119,21 @@ class GraphSlam:
 
         # Build edge arrays - only keep edges between temporally distant poses
         MIN_POSE_GAP = 30
-        loop_edges   = []
+        MAX_EDGES_PER_CORNER = 50  # Limit combinatorial explosion
+        loop_edges = []
         for corner_id, obs_list in corner_obs.items():
             if len(obs_list) < 2:
                 continue
+            corner_edges = []
             for i in range(len(obs_list)):
-                for j in range(i+1, len(obs_list)):
+                for j in range(i + 1, len(obs_list)):
                     p1, d1, a1 = obs_list[i]
                     p2, d2, a2 = obs_list[j]
                     if abs(p2 - p1) >= MIN_POSE_GAP:
-                        loop_edges.append((p1, p2, d1, d2, a1, a2))
+                        corner_edges.append((p1, p2, d1, d2, a1, a2, abs(p2 - p1)))
+            # Keep edges with largest pose gaps (most informative for loop closure)
+            corner_edges.sort(key=lambda e: e[6], reverse=True)
+            loop_edges.extend([e[:6] for e in corner_edges[:MAX_EDGES_PER_CORNER]])
 
         loop_edges = np.array(loop_edges) if loop_edges else np.empty((0, 6))
         n_loop_edges = len(loop_edges)
@@ -141,13 +146,30 @@ class GraphSlam:
         w_odom_theta = 1.0 / GLOBALS.GRAPH_SLAM_ODOM_NOISE_THETA
         w_obs = 1.0 / GLOBALS.GRAPH_SLAM_OBS_NOISE_DIST
 
+        # Pre-compute sizes for array allocation
+        n_odom = n_poses - 1
+        n_res = 3 + 3 * n_odom + 2 * n_loop_edges
+
+        # Pre-compute loop edge indices (avoid repeated casting)
+        if n_loop_edges > 0:
+            loop_p1 = loop_edges[:, 0].astype(int)
+            loop_p2 = loop_edges[:, 1].astype(int)
+            loop_d1, loop_d2 = loop_edges[:, 2], loop_edges[:, 3]
+            loop_a1, loop_a2 = loop_edges[:, 4], loop_edges[:, 5]
+
+        # Iteration counter for progress
+        iteration_counter = [0]
+
         def residuals(x):
             x = x.reshape(-1, 3)  # (n_poses, 3)
 
-            res = []
+            # Pre-allocate result array
+            res = np.empty(n_res)
 
-            # Anchor constraint
-            res.extend([x[0, 0] * 10000, x[0, 1] * 10000, x[0, 2] * 10000])
+            # Anchor constraint (indices 0-2)
+            res[0] = x[0, 0] * 10000
+            res[1] = x[0, 1] * 10000
+            res[2] = x[0, 2] * 10000
 
             # Odometry constraints (vectorized)
             t1 = x[:-1, 2]
@@ -155,38 +177,73 @@ class GraphSlam:
             x2_exp = x[:-1, 0] + odom_array[:, 0] * np.cos(t1_after)
             y2_exp = x[:-1, 1] + odom_array[:, 0] * np.sin(t1_after)
 
-            err_x = (x[1:, 0] - x2_exp) * w_odom_xy
-            err_y = (x[1:, 1] - y2_exp) * w_odom_xy
-            err_t = np.arctan2(np.sin(x[1:, 2] - t1_after), np.cos(x[1:, 2] - t1_after)) * w_odom_theta
-
-            res.extend(err_x)
-            res.extend(err_y)
-            res.extend(err_t)
+            idx = 3
+            res[idx:idx + n_odom] = (x[1:, 0] - x2_exp) * w_odom_xy
+            idx += n_odom
+            res[idx:idx + n_odom] = (x[1:, 1] - y2_exp) * w_odom_xy
+            idx += n_odom
+            res[idx:idx + n_odom] = np.arctan2(
+                np.sin(x[1:, 2] - t1_after),
+                np.cos(x[1:, 2] - t1_after)
+            ) * w_odom_theta
+            idx += n_odom
 
             # Loop closure constraints (vectorized)
             if n_loop_edges > 0:
-                p1 = loop_edges[:, 0].astype(int)
-                p2 = loop_edges[:, 1].astype(int)
-                d1, d2 = loop_edges[:, 2], loop_edges[:, 3]
-                a1, a2 = loop_edges[:, 4], loop_edges[:, 5]
+                cx1 = x[loop_p1, 0] + loop_d1 * np.cos(x[loop_p1, 2] + loop_a1)
+                cy1 = x[loop_p1, 1] + loop_d1 * np.sin(x[loop_p1, 2] + loop_a1)
+                cx2 = x[loop_p2, 0] + loop_d2 * np.cos(x[loop_p2, 2] + loop_a2)
+                cy2 = x[loop_p2, 1] + loop_d2 * np.sin(x[loop_p2, 2] + loop_a2)
 
-                cx1 = x[p1, 0] + d1 * np.cos(x[p1, 2] + a1)
-                cy1 = x[p1, 1] + d1 * np.sin(x[p1, 2] + a1)
-                cx2 = x[p2, 0] + d2 * np.cos(x[p2, 2] + a2)
-                cy2 = x[p2, 1] + d2 * np.sin(x[p2, 2] + a2)
+                res[idx:idx + n_loop_edges] = (cx1 - cx2) * w_obs
+                idx += n_loop_edges
+                res[idx:idx + n_loop_edges] = (cy1 - cy2) * w_obs
 
-                res.extend((cx1 - cx2) * w_obs)
-                res.extend((cy1 - cy2) * w_obs)
+            # Progress tracking
+            iteration_counter[0] += 1
+            if iteration_counter[0] % 50 == 0:
+                cost = np.sum(res ** 2)
+                print(f"    Iteration {iteration_counter[0]:4d}: cost = {cost:.4f}")
 
-            return np.array(res)
+            return res
+
+        ## DEBUG ----
+        # Compute initial cost breakdown
+        init_res  = residuals(x0)
+        iteration_counter[0] = 0  # Reset after initial evaluation
+        anchor_cost = np.sum(init_res[0:3] ** 2)
+        odom_cost = np.sum(init_res[3:3 + 3*n_odom] ** 2)
+        loop_cost = np.sum(init_res[3 + 3*n_odom:] ** 2) if n_loop_edges > 0 else 0
+        print(f"  Initial cost breakdown:")
+        print(f"    Anchor:       {anchor_cost:.2f}")
+        print(f"    Odometry:     {odom_cost:.2f}")
+        print(f"    Loop closure: {loop_cost:.2f}")
+        print(f"    TOTAL:        {anchor_cost + odom_cost + loop_cost:.2f}")
+        ## DEBUG ----
 
         print("  Running optimization...")
-        result = least_squares(residuals, x0, method='lm',
+        print(f"  Max nfev: {n_poses * GLOBALS.GRAPH_SLAM_MAX_ITERATIONS}")
+        result = least_squares(residuals, x0, method='trf',
+                               loss='soft_l1',
+                               f_scale=1.0,
                                max_nfev=GLOBALS.GRAPH_SLAM_MAX_ITERATIONS * n_poses,
+                               ftol=1e-6,
+                               xtol=1e-6,
                                verbose=2)
 
         print(f"  Converged: {result.success}, Iterations: {result.nfev}")
         print(f"  Final cost: {result.cost:.4f}")
+
+        # Final cost breakdown
+        final_res = residuals(result.x)
+        iteration_counter[0] = 0  # Reset
+        anchor_cost = np.sum(final_res[0:3] ** 2)
+        odom_cost = np.sum(final_res[3:3 + 3*n_odom] ** 2)
+        loop_cost = np.sum(final_res[3 + 3*n_odom:] ** 2) if n_loop_edges > 0 else 0
+        print(f"  Final cost breakdown:")
+        print(f"    Anchor:       {anchor_cost:.2f}")
+        print(f"    Odometry:     {odom_cost:.2f}")
+        print(f"    Loop closure: {loop_cost:.2f}")
 
         # Store optimized poses
         self.optimized_poses = np.zeros((3, n_poses))

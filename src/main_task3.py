@@ -34,7 +34,7 @@ def transform_scan_to_world(
 
 
 def get_homogeneous_matrix_from_pose(pose: np.ndarray) -> np.ndarray:
-    """Create 3x3 SE(2) transformation matrix from [x, y, theta]."""
+    """Create 3x3 transformation matrix from [x, y, theta]."""
     x, y, theta = pose[0], pose[1], pose[2]
     cos_t = np.cos(theta)
     sin_t = np.sin(theta)
